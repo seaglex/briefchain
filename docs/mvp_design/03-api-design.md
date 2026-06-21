@@ -1,0 +1,600 @@
+# BriefChain REST API 设计文档
+
+> 版本：MVP v0.1  
+> 最后更新：2026-06-21  
+> 基础路径：`/api/v1`
+
+---
+
+## 设计原则
+
+- **JWT 认证**：登录后所有请求带 `Authorization: Bearer <token>`
+- **权限模型（MVP）**：`created_by` 有全部读写权限，其他人有只读权限
+- **状态码**：标准 HTTP 状态码，错误返回统一格式
+- **分页**：游标分页（cursor-based），避免 offset 性能问题
+
+---
+
+## 统一错误格式
+
+```json
+{
+  "error": {
+    "code": "BRIEF_NOT_FOUND",
+    "message": "Brief 不存在或无权限访问",
+    "details": {}
+  }
+}
+```
+
+---
+
+## 1. 认证（`/auth`）
+
+### 1.1 邮箱注册
+
+`POST /auth/register`
+
+```json
+// Request
+{
+  "email": "user@example.com",
+  "password": "secure_password",
+  "name": "张三"
+}
+
+// Response 201
+{
+  "user": { "id": "guid", "email": "...", "name": "...", "user_type": "registered" },
+  "token": "jwt_token"
+}
+```
+
+### 1.2 邮箱登录
+
+`POST /auth/login`
+
+```json
+// Request
+{
+  "email": "user@example.com",
+  "password": "secure_password"
+}
+
+// Response 200
+{
+  "user": { "id": "guid", "email": "...", "name": "...", "user_type": "registered" },
+  "token": "jwt_token"
+}
+```
+
+### 1.3 微信扫码登录（MVP 后续）
+
+`POST /auth/wechat`
+
+```json
+// Request
+{ "code": "wechat_oauth_code" }
+
+// Response 200
+{
+  "user": { "id": "guid", "name": "...", "user_type": "oauth" },
+  "token": "jwt_token",
+  "is_new": false
+}
+```
+
+### 1.4 获取当前用户
+
+`GET /auth/me`
+
+```
+Response 200
+{
+  "user": { "id": "guid", "email": "...", "name": "...", "user_type": "registered" }
+}
+```
+
+### 1.5 登出
+
+`POST /auth/logout`
+
+```
+Response 204
+```
+
+---
+
+## 2. Brief（`/briefs`）
+
+### 2.1 创建 Brief
+
+`POST /briefs`
+
+```json
+// Request
+{
+  "title": "优化首页加载速度",
+  "content": "当前首页首屏加载时间 3.2s，目标降到 1.5s 以内...",
+  "attachments": [
+    { "name": "性能报告.png", "url": "https://...", "type": "image" }
+  ],
+  "priority": "p1",
+  "estimated_man_days": 3,
+  "parent_id": null
+}
+
+// Response 201
+{
+  "brief": {
+    "brief_id": "guid",
+    "root_id": "guid",
+    "parent_id": null,
+    "current_version": 1,
+    "status": "draft",
+    "title": "优化首页加载速度",
+    "content": "...",
+    "priority": "p1",
+    "estimated_man_days": 3,
+    "created_by": "user_guid",
+    "assigned_to": null,
+    "created_at": "2026-06-20T22:00:00Z",
+    "updated_at": "2026-06-20T22:00:00Z"
+  }
+}
+```
+
+### 2.2 列表查询 Brief
+
+`GET /briefs?status=draft&role=created&page_cursor=abc&page_size=20`
+
+查询参数：
+- `status` — 过滤状态
+- `role` — `created`（我创建的）/ `assigned`（分配给我的）/ `all`（全部可读）
+- `root_id` — 过滤某棵树
+- `page_cursor` — 分页游标
+- `page_size` — 每页数量，默认 20
+
+```
+Response 200
+{
+  "briefs": [ ... ],
+  "next_cursor": "next_page_token_or_null"
+}
+```
+
+### 2.3 获取单个 Brief
+
+`GET /briefs/:brief_id`
+
+```
+Response 200
+{
+  "brief": {
+    "brief_id": "guid",
+    "root_id": "guid",
+    "parent_id": null,
+    "current_version": 1,
+    "status": "draft",
+    "title": "...",
+    "content": "...",
+    "priority": "p1",
+    "estimated_man_days": 3,
+    "created_by": { "id": "guid", "name": "张三", "avatar_url": null },
+    "assigned_to": null,
+    "created_at": "2026-06-20T22:00:00Z",
+    "updated_at": "2026-06-20T22:00:00Z"
+  }
+}
+```
+
+> 权限：created_by 或只读权限用户可访问
+
+### 2.4 更新 Brief（仅 draft 状态）
+
+`PATCH /briefs/:brief_id`
+
+```json
+// Request（只传需要更新的字段）
+{
+  "title": "新标题",
+  "content": "更新后的内容",
+  "priority": "p0"
+}
+
+// Response 200
+{
+  "brief": { ... },
+  "version": 2   // current_version 已 +1
+}
+```
+
+> 权限：只有 created_by 可更新，且 status = draft
+
+### 2.5 提交审查（draft → reviewed）
+
+`POST /briefs/:brief_id/submit`
+
+```
+Request body: 空或 { "note": "请审查" }
+
+Response 200
+{
+  "brief": { "status": "reviewed", ... },
+  "message": "Brief 已提交，等待审查"
+}
+```
+
+> MVP 阶段：跳过 Arbiter，直接转 reviewed  
+> 后续：调用 Arbiter LLM，通过才转 reviewed
+
+### 2.6 发送 Brief（reviewed → sent）
+
+`POST /briefs/:brief_id/send`
+
+```json
+// Request
+{
+  "assigned_to": "downstream_user_guid",
+  "note": "请帮忙评估工时"
+}
+
+// Response 200
+{
+  "brief": { "status": "sent", "assigned_to": "downstream_user_guid", ... },
+  "transfer": { "sent_at": "2026-06-20T22:30:00Z", "accepted_at": null, "rejected_at": null }
+}
+```
+
+> 权限：只有 created_by 可发送
+
+### 2.7 接受 Brief（sent → accepted）
+
+`POST /briefs/:brief_id/accept`
+
+```
+Request body: 空或 { "note": "已理解，开始排期" }
+
+Response 200
+{
+  "brief": { "status": "accepted", ... },
+  "transfer": { "accepted_at": "2026-06-20T22:35:00Z" }
+}
+```
+
+> 权限：只有 assigned_to 可接受
+
+### 2.8 拒绝 Brief（sent → draft）
+
+`POST /briefs/:brief_id/reject`
+
+```json
+// Request
+{ "reason": "验收标准不清晰，请补充具体性能指标" }
+
+// Response 200
+{
+  "brief": { "status": "draft", ... },
+  "transfer": { "rejected_at": "2026-06-20T22:40:00Z", "rejection_reason": "..." }
+}
+```
+
+> 权限：只有 assigned_to 可拒绝
+
+### 2.9 取消 Brief
+
+`POST /briefs/:brief_id/cancel`
+
+```
+Response 200
+{ "brief": { "status": "cancelled", ... } }
+```
+
+> 权限：只有 created_by 可取消，且 status 不是 done
+
+### 2.10 完成 Brief（accepted → done）
+
+`POST /briefs/:brief_id/complete`
+
+```
+Response 200
+{ "brief": { "status": "done", ... } }
+```
+
+> 简化版：assigned_to 可以直接标记完成  
+> 完整版（后续）：需要提交 completion feedback + Arbiter 审查通过
+
+---
+
+## 3. Brief 版本（`/briefs/:brief_id/versions`）
+
+### 3.1 列出所有版本
+
+`GET /briefs/:brief_id/versions`
+
+```
+Response 200
+{
+  "versions": [
+    {
+      "version": 1,
+      "title": "优化首页加载速度",
+      "modified_by": "user_guid",
+      "modified_at": "2026-06-20T22:00:00Z",
+      "change_summary": "初始创建",
+      "is_upstream_changed": false,
+      "revision_reason": "initial"
+    }
+  ]
+}
+```
+
+### 3.2 获取某个版本详情
+
+`GET /briefs/:brief_id/versions/:version`
+
+```
+Response 200
+{
+  "version": 2,
+  "title": "...",
+  "content": "...",
+  "attachments": [ ... ],
+  "priority": "p1",
+  "estimated_man_days": 3,
+  "modified_by": "user_guid",
+  "modified_at": "2026-06-20T22:10:00Z",
+  "change_summary": "补充了性能指标细节",
+  "is_upstream_changed": false,
+  "revision_reason": "rejected_by_downstream"
+}
+```
+
+---
+
+## 4. 流转历史（`/briefs/:brief_id/transfers`）
+
+### 4.1 列出流转历史
+
+`GET /briefs/:brief_id/transfers`
+
+```
+Response 200
+{
+  "transfers": [
+    {
+      "id": "guid",
+      "brief_version": 1,
+      "from_user": { "id": "guid", "name": "张三" },
+      "to_user": { "id": "guid", "name": "李四" },
+      "sent_at": "2026-06-20T22:30:00Z",
+      "accepted_at": "2026-06-20T22:35:00Z",
+      "rejected_at": null,
+      "rejection_reason": null
+    }
+  ]
+}
+```
+
+---
+
+## 5. Feedback（`/briefs/:brief_id/feedbacks`）
+
+### 5.1 创建 Feedback
+
+`POST /briefs/:brief_id/feedbacks`
+
+```json
+// Request
+{
+  "type": "progress",
+  "content": "已完成接口层优化，预计明天完成前端集成",
+  "attachments": []
+}
+
+// Response 201
+{
+  "feedback": {
+    "id": "guid",
+    "brief_id": "guid",
+    "brief_version": 1,
+    "type": "progress",
+    "content": "...",
+    "from_user": { "id": "guid", "name": "李四" },
+    "created_at": "2026-06-20T23:00:00Z",
+    "confirmed_at": null
+  }
+}
+```
+
+> 权限：brief 的 assigned_to 或 created_by 可创建
+
+### 5.2 列出 Feedback
+
+`GET /briefs/:brief_id/feedbacks?type=progress`
+
+```
+Response 200
+{
+  "feedbacks": [ ... ]
+}
+```
+
+### 5.3 获取单个 Feedback
+
+`GET /feedbacks/:feedback_id`
+
+```
+Response 200
+{ "feedback": { ... } }
+```
+
+---
+
+## 6. Brief Chain（`/chains`）
+
+### 6.1 创建 Chain（即创建根 Brief 时自动创建）
+
+> MVP 简化：创建 root brief 时自动创建 chain，不需要单独创建
+
+### 6.2 列出我的 Chains
+
+`GET /chains`
+
+```
+Response 200
+{
+  "chains": [
+    {
+      "chain_id": "guid",
+      "title": "Q3 性能优化项目",
+      "root_brief_id": "guid",
+      "brief_count": 5,
+      "created_at": "2026-06-20T22:00:00Z"
+    }
+  ]
+}
+```
+
+### 6.3 获取 Chain 详情（含树形结构）
+
+`GET /chains/:chain_id`
+
+```
+Response 200
+{
+  "chain": {
+    "chain_id": "guid",
+    "title": "Q3 性能优化项目",
+    "root_brief": { "brief_id": "guid", "title": "...", ... },
+    "tree": {
+      "brief_id": "root_guid",
+      "title": "...",
+      "status": "accepted",
+      "children": [
+        {
+          "brief_id": "child_guid",
+          "title": "...",
+          "status": "done",
+          "children": []
+        }
+      ]
+    }
+  }
+}
+```
+
+---
+
+## 7. 用户（`/users`）
+
+### 7.1 获取用户列表
+
+`GET /users?role=created&status=draft`
+
+```
+Response 200
+{
+  "users": [
+    { "id": "guid", "name": "张三", "email": "***@example.com", "avatar_url": null }
+  ]
+}
+```
+
+> 敏感信息（email/phone）只对本人和 admin 返回
+
+### 7.2 获取单个用户
+
+`GET /users/:user_id`
+
+```
+Response 200
+{ "user": { "id": "guid", "name": "...", "avatar_url": null } }
+```
+
+> 敏感信息（email/phone）只对本人和 admin 返回
+
+---
+
+## 8. 临时用户（邮件 Token）
+
+### 8.1 验证 Token（邮件链接点击）
+
+`GET /tokens/:token/verify`
+
+```
+Response 200
+{
+  "valid": true,
+  "brief_id": "guid",
+  "brief_title": "...",
+  "action": "review"   // review = 查看并决定是否接受/拒绝
+}
+```
+
+### 8.2 通过 Token 接受 Brief
+
+`POST /tokens/:token/accept`
+
+```
+Response 200
+{
+  "brief": { "status": "accepted", ... },
+  "message": "已接受，请登录或继续作为临时用户操作"
+}
+```
+
+### 8.3 通过 Token 拒绝 Brief
+
+`POST /tokens/:token/reject`
+
+```json
+// Request
+{ "reason": "..." }
+
+// Response 200
+{ "brief": { "status": "draft", ... } }
+```
+
+---
+
+## 9. 统计（MVP 基础版）
+
+### 9.1 我的仪表盘
+
+`GET /dashboard`
+
+```
+Response 200
+{
+  "created_by_me": { "draft": 2, "reviewed": 1, "sent": 3, "done": 5 },
+  "assigned_to_me": { "accepted": 2, "done": 1 },
+  "overdue": []
+}
+```
+
+---
+
+## 附录：状态转移图
+
+```
+[draft] ──submit──→ [reviewed] ──send──→ [sent]
+                                           ↓ accept    ↓ reject
+                                      [accepted]    [draft]
+                                           ↓ complete
+                                        [done]
+
+[draft/sent/accepted] ──cancel──→ [cancelled]
+[accepted] ──blocked feedback──→ [blocked] ──resolve──→ [accepted]
+```
+
+---
+
+## 附录：MVP 不做的功能
+
+- ❌ Arbiter LLM 自动审查（人工替代）
+- ❌ 内部 Kanban / 工作状态管理
+- ❌ 跨系统互操作（bc:// 协议）
+- ❌ 可配置工作流模板
+- ❌ 微信/三方登录（先邮箱注册）
+- ❌ 细粒度权限（先 created_by 全权限）
