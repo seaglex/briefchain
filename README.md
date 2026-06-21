@@ -78,8 +78,16 @@ Idea（根 brief）
 - User（支持邮箱注册）
 - 权限系统
 
-技术栈：FastAPI + Next.js + PostgreSQL
+技术栈
+- 后端 python + FastAPI + SQLAlchemy
+- 前端 Next.js
+- 数据库 PostgreSQL + sqlite（本地最简模式）
+- object storage MinIO + 本地文件adapter（本地最简模式）
 
 设计文档：[docs/mvp_design/](docs/mvp_design/)
+
+已实现
+- brief data & api
+- user data & api
 
 License：Apache-2.0

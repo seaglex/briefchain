@@ -12,7 +12,7 @@ draft
 reviewed
   ↓ (发送)
 sent
-  ↓ (发送给 downstream，记录在 transfer_history)
+  ↓ (发送给 downstream，记录在 brief_transfer_history)
 accepted ─── OR ─── (downstream 拒绝，brief.status 回到 draft)
   ↓                                   ↓ (upstream 修改后重新发送)
                                      reviewed
@@ -78,7 +78,7 @@ briefs {
 设计决策：
 - `children_ids` 不存储，查子节点用 `WHERE parent_id = ?`
 - `root_id` 在根节点指向自己，查询整棵树统一用 `WHERE root_id = X`
-- `sent_at` 不存储，发送时间记录在 transfer_history 表
+- `sent_at` 不存储，发送时间记录在 brief_transfer_history 表
 - `source_system` MVP 阶段忽略，跨系统后续再加
 
 ---
@@ -113,12 +113,12 @@ brief_versions {
 
 ---
 
-### 2.3 transfer_history（流转记录表）
+### 2.3 brief_transfer_history
 
 一次交互一条记录，覆盖 sent → accepted / rejected 完整生命周期。
 
 ```sql
-transfer_history {
+brief_transfer_history {
   id: GUID
   brief_id: GUID
   brief_version: number       -- 发送的是哪个版本
@@ -259,7 +259,7 @@ feedbacks {
 
 - [x] briefs 实体表设计（2.1）
 - [x] brief_versions 版本表设计（2.2）
-- [x] transfer_history 流转记录表设计（2.3）
+- [x] brief_transfer_history 流转记录表设计（2.3）
 - [x] brief_chains 链元数据表设计（2.4）
 - [x] brief_arbiter_reviews Brief 审查表设计（2.5）
 - [x] feedback_arbiter_reviews Feedback 审查表设计（2.6）
