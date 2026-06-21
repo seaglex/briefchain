@@ -287,6 +287,7 @@ def list_briefs(
         .where(and_(True, *conditions))
         .order_by(Brief.updated_at.desc(), Brief.brief_id.desc())
         .limit(page_size)
+        .options(selectinload(Brief.versions))
     )
     briefs = session.execute(stmt).scalars().all()
 
