@@ -101,9 +101,7 @@ export default function Sidebar({ currentUserName = "用户" }: SidebarProps) {
           display: "flex",
           alignItems: "center",
           gap: 8,
-          cursor: "pointer",
         }}
-        onClick={handleLogout}
       >
         <div className="avatar-sm">{currentUserName.slice(0, 2).toUpperCase()}</div>
         <span className="text-2">{currentUserName}</span>
@@ -116,7 +114,9 @@ export default function Sidebar({ currentUserName = "用户" }: SidebarProps) {
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
-          style={{ color: "var(--c-text-3)", marginLeft: "auto" }}
+          onClick={handleLogout}
+          className="logout-icon"
+          style={{ color: "var(--c-text-3)", marginLeft: "auto", cursor: "pointer" }}
         >
           <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
           <polyline points="16 17 21 12 16 7" />

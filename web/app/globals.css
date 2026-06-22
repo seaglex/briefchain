@@ -85,7 +85,7 @@ h3 { font-size: 13px; font-weight: 500; }
 .badge-p3 { background: var(--c-blue-bg); color: var(--c-blue); }
 
 /* Cards */
-.card { background: var(--c-bg-2); border: 0.5px solid var(--c-border); border-radius: var(--radius); padding: 1rem 1.25rem; margin-bottom: 12px; }
+.card { display: block; background: var(--c-bg-2); border: 0.5px solid var(--c-border); border-radius: var(--radius); padding: 1rem 1.25rem; margin-bottom: 12px; }
 .card:hover { border-color: var(--c-text-3); }
 .card-clickable { cursor: pointer; transition: all 0.15s; }
 

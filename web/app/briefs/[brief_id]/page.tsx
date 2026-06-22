@@ -74,7 +74,7 @@ export default async function BriefDetailPage({
     serverFetch<Feedback[]>(`/api/v1/briefs/${brief_id}/feedbacks`),
   ]);
 
-  const brief = detailResult.ok ? detailResult.data.brief : null;
+  const brief = detailResult.ok ? detailResult.data : null;
   const transfers = transfersResult.ok ? transfersResult.data : [];
   const feedbacks = feedbacksResult.ok ? feedbacksResult.data : [];
 
