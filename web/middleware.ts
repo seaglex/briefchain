@@ -21,11 +21,6 @@ export function middleware(request: NextRequest) {
 
   const hasSession = request.cookies.has(SESSION_COOKIE_NAME);
 
-  // Authenticated users should not see login/register pages.
-  if (hasSession && PUBLIC_PATHS.includes(pathname)) {
-    return NextResponse.redirect(new URL("/", request.url));
-  }
-
   // Unauthenticated users can only access public pages.
   if (!hasSession && !PUBLIC_PATHS.includes(pathname)) {
     return NextResponse.redirect(new URL("/login", request.url));

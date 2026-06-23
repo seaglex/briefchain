@@ -1,7 +1,7 @@
 # BriefChain REST API 设计文档
 
-> 版本：MVP v0.1  
-> 最后更新：2026-06-21  
+> 版本：MVP v0.3
+> 最后更新：2026-06-23
 > 基础路径：`/api/v1`
 
 ---
@@ -41,10 +41,12 @@
   "email": "user@example.com",      // 可选，email 和 phone 至少提供一个
   "phone": "+86 138 0000 0000",   // 可选
   "password": "secure_password",
-  "name": "张三"
+  "name": "张三",
+  "temporary_user_id": null,      // 可选，邀请页面传入的临时用户 UUID
+  "invite_token": null            // 可选，邀请链接 token（与 temporary_user_id 配对，用于校验 + 提取 brief_id）
 }
 
-// Response 201
+// Response 201 — 普通注册
 {
   "user": { 
     "id": "guid", 
@@ -55,12 +57,26 @@
   },
   "token": "jwt_token"
 }
+
+// Response 201 — 临时用户升级注册（invite_token + temporary_user_id 有效）
+{
+  "user": { 
+    "id": "同一UUID", 
+    "email": "...", 
+    "phone": "...",
+    "name": "...", 
+    "user_type": "registered" 
+  },
+  "token": "jwt_token",
+  "upgraded_from_temporary": true
+}
 ```
 
 > 校验规则：
 > - `email` 和 `phone` 至少提供一个
 > - 如果提供 `email`，格式需合法且未注册
 > - 如果提供 `phone`，格式需合法且未注册
+> - 若 `invite_token` + `temporary_user_id` 均有效：校验 token 签名和有效期，提取 brief_id，原地升级（`user_type` → `registered`，`user_id` 不变），邀请链接标记失效（详见 05-invite-link-design.md 5.3）
 
 ### 1.2 登录
 
@@ -70,10 +86,12 @@
 // Request
 {
   "email_or_phone": "user@example.com",  // 或 "+86 138 0000 0000"
-  "password": "secure_password"
+  "password": "secure_password",
+  "temporary_user_id": null,      // 可选，邀请页面传入的临时用户 UUID
+  "invite_token": null            // 可选，邀请链接 token（与 temporary_user_id 配对，用于校验 + 提取 brief_id）
 }
 
-// Response 200
+// Response 200 — 普通登录
 {
   "user": { 
     "id": "guid", 
@@ -84,9 +102,23 @@
   },
   "token": "jwt_token"
 }
+
+// Response 200 — 登录并接管临时用户
+{
+  "user": { 
+    "id": "注册用户UUID", 
+    "email": "...", 
+    "phone": "...",
+    "name": "...", 
+    "user_type": "registered" 
+  },
+  "token": "jwt_token",
+  "linked_temporary_user": "临时用户UUID"
+}
 ```
 
 > 后端自动识别 `email_or_phone` 是邮箱还是手机（含 `+` 号或纯数字为手机）
+> 若 `invite_token` + `temporary_user_id` 均有效：校验 token，提取 brief_id，直接更新该 brief 的 assigned_to 为注册用户 UUID，邀请链接标记失效，已发生的 transfer/feedback 不改（详见 05-invite-link-design.md 5.3）
 
 ### 1.3 微信扫码登录（MVP 后续）
 
@@ -306,9 +338,14 @@ Response 200
 
 `POST /briefs/:brief_id/send`
 
+通过 `is_temporary_user` 参数区分两种发送方式：
+
+**方式一：发送给已注册用户（`is_temporary_user=false` 或缺省）**
+
 ```json
 // Request
 {
+  "is_temporary_user": false,
   "assigned_to": "downstream_user_guid",
   "note": "请帮忙评估工时"
 }
@@ -320,7 +357,48 @@ Response 200
 }
 ```
 
-> 权限：只有 created_by 可发送
+**方式二：发送给外部用户（`is_temporary_user=true`，详见 05-invite-link-design.md）**
+
+```json
+// Request
+{
+  "is_temporary_user": true,
+  "recipient_email": "lisi@example.com",     // 可选，email 和 phone 至多填一个
+  "recipient_phone": null,                   // 可选
+  "recipient_name": "李四",                  // 可选，用于显示
+  "note": "请帮忙评估工时",
+  "accept_deadline_days": 7,                 // 接受截止天数，默认 7
+  "complete_deadline_days": 30               // 完成截止天数，默认 30
+}
+
+// Response 200 — 新建临时用户
+{
+  "brief": { "status": "sent", "assigned_to": "临时用户UUID", ... },
+  "transfer": { "to_user": "临时用户UUID", "sent_at": "...", ... },
+  "invite": {
+    "invite_url": "/invites/{token}",
+    "accept_deadline": "2026-06-27T22:30:00Z",
+    "complete_deadline": "2026-07-20T22:30:00Z"
+  }
+}
+
+// Response 200 — email/phone 命中已注册用户，自动转方式一
+{
+  "brief": { "status": "sent", "assigned_to": "注册用户UUID", ... },
+  "transfer": { "to_user": "注册用户UUID", "sent_at": "...", ... }
+  // 无 invite 字段
+}
+```
+
+> 校验规则：
+> - `is_temporary_user=false`：必须有 `assigned_to`
+> - `is_temporary_user=true`：`recipient_email` 和 `recipient_phone` 至多填一个（可都不填）；无 `assigned_to`
+> - 方式二查找逻辑（详见 05-invite-link-design.md 第 6.1 节）：
+>   - email/phone 命中 registered/oauth 用户 → 自动转方式一
+>   - email/phone 命中 temporary 用户且 `final_user_id` 为空 → 复用该 user_id，新建 invite
+>   - email/phone 命中 temporary 用户且 `final_user_id` 不为空 → 用 `final_user_id` 走方式一
+>   - 未命中或未填 email/phone → 新建临时用户 + invite
+> - 权限：只有 created_by 可发送
 
 ### 2.7 接受 Brief（sent → accepted）
 
@@ -683,3 +761,4 @@ Response 200
 - ❌ 微信/三方登录（先邮箱/手机注册）
 - ❌ 细粒度权限（先 created_by 全权限）
 - ❌ 手机号验证码登录（MVP 只支持密码登录）
+- ❌ 邀请链接验证码（MVP 只做信任场景，详见 05-invite-link-design.md）

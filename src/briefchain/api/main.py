@@ -18,6 +18,7 @@ from briefchain.api.routes import (
     briefs,
     chains,
     feedbacks,
+    invites,
     users,
 )
 
@@ -43,6 +44,7 @@ def create_app() -> FastAPI:
     app.include_router(feedbacks.brief_router, prefix="/api/v1")
     app.include_router(feedbacks.feedback_router, prefix="/api/v1")
     app.include_router(chains.router, prefix="/api/v1")
+    app.include_router(invites.router, prefix="/api/v1")
 
     @app.get("/health", status_code=status.HTTP_200_OK, tags=["health"])
     def health_check() -> dict:

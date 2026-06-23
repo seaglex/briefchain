@@ -32,7 +32,7 @@ export default function NewBriefPage() {
     if (!validate()) return;
 
     setLoading(true);
-    const result = await apiFetch<{ brief: { brief_id: string } }>("/api/briefs", {
+    const result = await apiFetch<{ brief_id: string }>("/api/briefs", {
       method: "POST",
       body: JSON.stringify({
         title: title.trim(),
@@ -44,12 +44,12 @@ export default function NewBriefPage() {
     });
     setLoading(false);
 
+    console.log(result)
     if (!result.ok) {
       setError(result.message);
       return;
     }
-
-    router.replace(`/briefs/${result.data.brief.brief_id}`);
+    router.replace(`/briefs/${result.data.brief_id}`);
   };
 
   return (

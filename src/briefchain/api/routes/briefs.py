@@ -12,6 +12,7 @@ from briefchain.api.schemas.briefs import (
     BriefDetail,
     BriefLifecycleResponse,
     BriefUpdateRequest,
+    SendBriefRequest,
 )
 from briefchain.api.services import briefs as brief_service
 from briefchain.models.enums import BriefStatus
@@ -81,13 +82,6 @@ def submit_brief(
     return brief_service.submit_brief(session, brief_id, user_id)
 
 
-class SendBriefRequest(BaseModel):
-    """Request body for sending a brief."""
-
-    assigned_to: UUID
-    note: str | None = None
-
-
 class RejectBriefRequest(BaseModel):
     """Request body for rejecting a brief."""
 
@@ -101,8 +95,8 @@ def send_brief(
     brief_id: UUID,
     request: SendBriefRequest,
 ) -> BriefLifecycleResponse:
-    """Send a reviewed brief to a downstream user."""
-    return brief_service.send_brief(session, brief_id, user_id, request.assigned_to, request.note)
+    """Send a reviewed brief to a downstream user or external recipient."""
+    return brief_service.send_brief(session, brief_id, user_id, request)
 
 
 @router.post("/{brief_id}/accept", response_model=BriefLifecycleResponse)

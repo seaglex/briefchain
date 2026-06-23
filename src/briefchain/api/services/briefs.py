@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -21,10 +21,18 @@ from briefchain.api.schemas.briefs import (
     BriefUpdateRequest,
     BriefVersionDetail,
     BriefVersionListItem,
+    SendBriefRequest,
     UserRef,
 )
-from briefchain.models import Brief, BriefChain, BriefTransferHistory, BriefVersion, User
-from briefchain.models.enums import BriefPriority, BriefStatus
+from briefchain.models import (
+    Brief,
+    BriefChain,
+    BriefInvite,
+    BriefTransferHistory,
+    BriefVersion,
+    User,
+)
+from briefchain.models.enums import BriefPriority, BriefStatus, UserType
 
 
 def _now() -> datetime:
@@ -431,10 +439,11 @@ def send_brief(
     session: Session,
     brief_id: UUID,
     user_id: UUID,
-    assigned_to: UUID,
-    note: str | None = None,
+    request: SendBriefRequest,
 ) -> BriefLifecycleResponse:
-    """Send a reviewed brief to a downstream user."""
+    """Send a reviewed brief to a downstream user or external recipient."""
+    from briefchain.api.services import invites as invite_service
+
     brief = _load_brief_with_versions(session, brief_id)
     _require_creator(brief, user_id)
     if brief.status != BriefStatus.REVIEWED:
@@ -443,6 +452,23 @@ def send_brief(
             message="Only reviewed briefs can be sent",
             status_code=409,
         )
+
+    if request.is_temporary_user:
+        assigned_to, is_internal_send = _resolve_temporary_recipient(
+            session,
+            brief_id,
+            user_id,
+            request,
+        )
+    else:
+        if request.assigned_to is None:
+            raise APIError(
+                code="INVALID_SEND_REQUEST",
+                message="assigned_to is required when is_temporary_user is false",
+                status_code=422,
+            )
+        assigned_to = request.assigned_to
+        is_internal_send = True
 
     transfer = BriefTransferHistory(
         id=uuid4(),
@@ -464,10 +490,129 @@ def send_brief(
         session,
         {brief.created_by, brief.assigned_to, transfer.from_user, transfer.to_user} - {None},
     )
-    return BriefLifecycleResponse(
+
+    response = BriefLifecycleResponse(
         brief=_serialize_brief(brief, users, detail=True),
         transfer=_serialize_transfer(transfer, users),
     )
+
+    if request.is_temporary_user and not is_internal_send:
+        invite = session.execute(
+            select(BriefInvite).where(
+                BriefInvite.brief_id == brief_id,
+                BriefInvite.invalidated_at.is_(None),
+            )
+        ).scalars().first()
+        if invite is not None:
+            response.invite = {
+                "invite_url": invite_service.build_invite_url(invite.token),
+                "accept_deadline": invite_service._format_time(invite.accept_deadline),
+                "complete_deadline": invite_service._format_time(invite.complete_deadline),
+            }
+
+    return response
+
+
+def _resolve_temporary_recipient(
+    session: Session,
+    brief_id: UUID,
+    user_id: UUID,
+    request: SendBriefRequest,
+) -> tuple[UUID, bool]:
+    """Resolve a temporary-user send request to a user UUID.
+
+    Returns:
+        Tuple of (assigned_to_user_id, is_internal_send). is_internal_send is True
+        when the recipient is a registered user or a temporary user already linked
+        to a final user; in that case no invite is created.
+    """
+
+    email = request.recipient_email.strip() if request.recipient_email else None
+    phone = request.recipient_phone.strip() if request.recipient_phone else None
+
+    if email or phone:
+        existing = session.execute(
+            select(User).where(
+                or_(
+                    User.email == email if email else False,
+                    User.phone == phone if phone else False,
+                )
+            )
+        ).scalars().first()
+
+        if existing is not None:
+            if existing.user_type == UserType.TEMPORARY:
+                final_user_id = _get_final_user_id_for_temporary(session, existing.id)
+                if final_user_id is not None:
+                    return final_user_id, True
+                # Reuse existing active temporary user; create a new invite for this brief.
+                _create_invite_for_temporary_user(
+                    session,
+                    brief_id,
+                    user_id,
+                    request,
+                    existing,
+                )
+                return existing.id, False
+            return existing.id, True
+
+    temporary_user = User(
+        id=uuid4(),
+        email=email,
+        phone=phone,
+        name=request.recipient_name or (email or phone or "Guest"),
+        user_type=UserType.TEMPORARY,
+        password_hash=None,
+    )
+    session.add(temporary_user)
+    session.flush()
+
+    _create_invite_for_temporary_user(
+        session,
+        brief_id,
+        user_id,
+        request,
+        temporary_user,
+    )
+    return temporary_user.id, False
+
+
+def _create_invite_for_temporary_user(
+    session: Session,
+    brief_id: UUID,
+    from_user: UUID,
+    request: SendBriefRequest,
+    temporary_user: User,
+) -> None:
+    """Create a BriefInvite for a temporary user."""
+    from briefchain.api.services import invites as invite_service
+
+    now = _now()
+    accept_deadline = now + timedelta(days=request.accept_deadline_days)
+    complete_deadline = now + timedelta(days=request.complete_deadline_days)
+
+    invite_service.create_invite(
+        session=session,
+        brief_id=brief_id,
+        from_user=from_user,
+        recipient_name=temporary_user.name,
+        recipient_email=temporary_user.email,
+        recipient_phone=temporary_user.phone,
+        accept_deadline=accept_deadline,
+        complete_deadline=complete_deadline,
+        temporary_user_id=temporary_user.id,
+    )
+
+
+def _get_final_user_id_for_temporary(session: Session, temporary_user_id: UUID) -> UUID | None:
+    """Return the final_user_id from any invite linked to the temporary user, if present."""
+    invite = session.execute(
+        select(BriefInvite).where(
+            BriefInvite.temporary_user_id == temporary_user_id,
+            BriefInvite.final_user_id.isnot(None),
+        )
+    ).scalars().first()
+    return invite.final_user_id if invite is not None else None
 
 
 def accept_brief(session: Session, brief_id: UUID, user_id: UUID) -> BriefLifecycleResponse:

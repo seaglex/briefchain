@@ -25,6 +25,7 @@ from briefchain.models.enums import ArbiterReviewStatus, BriefPriority, BriefSta
 
 if TYPE_CHECKING:
     from briefchain.models.feedback import Feedback
+    from briefchain.models.invite import BriefInvite
 
 
 class Brief(Base, TimestampMixin):
@@ -94,6 +95,12 @@ class Brief(Base, TimestampMixin):
         lazy="raise",
         back_populates="brief",
         order_by="Feedback.created_at.desc()",
+    )
+    invites: Mapped[list[BriefInvite]] = relationship(
+        "BriefInvite",
+        lazy="raise",
+        back_populates="brief",
+        order_by="BriefInvite.created_at.desc()",
     )
 
 

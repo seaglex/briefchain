@@ -12,7 +12,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from briefchain.api.config import settings
 from briefchain.api.exceptions import APIError
 from briefchain.api.security import decode_access_token
-from briefchain.models import User
+from briefchain.api.services import invites as invite_service
+from briefchain.models import BriefInvite, User
 
 _oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
@@ -67,3 +68,14 @@ def get_current_user(
 
 
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
+
+
+def get_invite_from_token(
+    session: SessionDep,
+    token: str,
+) -> BriefInvite:
+    """Validate an invite token and return the loaded BriefInvite record."""
+    return invite_service.get_invite_by_token(session, token)
+
+
+InviteDep = Annotated[BriefInvite, Depends(get_invite_from_token)]

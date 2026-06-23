@@ -15,18 +15,19 @@ from briefchain.models.enums import (
     UserType,
 )
 from briefchain.models.feedback import Feedback, FeedbackArbiterReview
-from briefchain.models.user import EmailToken, User, UserIdentity
+from briefchain.models.invite import BriefInvite
+from briefchain.models.user import User, UserIdentity
 
 __all__ = [
     "ArbiterReviewStatus",
     "Brief",
     "BriefArbiterReview",
     "BriefChain",
+    "BriefInvite",
     "BriefPriority",
     "BriefStatus",
     "BriefTransferHistory",
     "BriefVersion",
-    "EmailToken",
     "Feedback",
     "FeedbackArbiterReview",
     "FeedbackType",

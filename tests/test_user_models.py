@@ -1,6 +1,5 @@
 """Unit tests for User data models."""
 
-from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -9,7 +8,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from briefchain.models import (
-    EmailToken,
     User,
     UserIdentity,
     UserType,
@@ -122,30 +120,3 @@ def test_duplicate_provider_identity_rejected(db_session) -> None:
     db_session.add(duplicate)
     with pytest.raises(IntegrityError):
         db_session.commit()
-
-
-def test_create_and_use_email_token(db_session) -> None:
-    """Create an email token and mark it as used."""
-    brief_id = uuid4()
-    token = EmailToken(
-        token=str(uuid4()),
-        email="external@example.com",
-        brief_id=brief_id,
-        expires_at=datetime.now(UTC) + timedelta(days=7),
-    )
-
-    db_session.add(token)
-    db_session.commit()
-
-    loaded = db_session.execute(
-        select(EmailToken).where(EmailToken.token == token.token)
-    ).scalar_one()
-    assert loaded.used_at is None
-
-    loaded.used_at = datetime.now(UTC)
-    db_session.commit()
-
-    reloaded = db_session.execute(
-        select(EmailToken).where(EmailToken.token == token.token)
-    ).scalar_one()
-    assert reloaded.used_at is not None

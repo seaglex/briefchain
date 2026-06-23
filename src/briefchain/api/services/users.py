@@ -11,8 +11,34 @@ from briefchain.api.exceptions import APIError
 from briefchain.api.schemas.auth import AuthResponse, LoginRequest, RegisterRequest, UserAuthBase
 from briefchain.api.schemas.users import UserListResponse, UserResponse, serialize_user
 from briefchain.api.security import create_access_token, get_password_hash, verify_password
-from briefchain.models import User
-from briefchain.models.enums import UserType
+from briefchain.models import Brief, User
+from briefchain.models.enums import BriefStatus, UserType
+
+_ACTIVE_BRIEF_STATUSES = {
+    BriefStatus.DRAFT,
+    BriefStatus.REVIEWED,
+    BriefStatus.SENT,
+    BriefStatus.ACCEPTED,
+    BriefStatus.BLOCKED,
+}
+
+
+def _migrate_active_briefs(
+    session: Session,
+    temporary_user_id: UUID,
+    registered_user_id: UUID,
+) -> None:
+    """Reassign all non-done/non-cancelled briefs from a temporary user to a registered user."""
+    active_briefs = session.execute(
+        select(Brief).where(
+            Brief.assigned_to == temporary_user_id,
+            Brief.status.in_(_ACTIVE_BRIEF_STATUSES),
+        )
+    ).scalars().all()
+
+    for brief in active_briefs:
+        brief.assigned_to = registered_user_id
+        session.add(brief)
 
 
 def _build_contact_filter(email: str | None, phone: str | None) -> object:
@@ -35,19 +61,45 @@ def _find_existing_user(
     return session.execute(select(User).where(filter_clause)).scalars().first()
 
 
-def register_user(session: Session, request: RegisterRequest) -> AuthResponse:
-    """Register a new user with email or phone and a password.
-
-    Args:
-        session: SQLAlchemy database session.
-        request: Registration request containing email/phone, name, and password.
+def _require_temporary_brief(session: Session, brief_id: UUID | None) -> tuple[Brief, User]:
+    """Validate that brief_id points to a brief assigned to a temporary user.
 
     Returns:
-        Authentication response with the new user and a JWT token.
+        Tuple of (brief, temporary_user).
 
     Raises:
-        APIError: If no contact method is provided or the contact is already registered.
+        APIError: If the brief does not exist or is not assigned to a temporary user.
     """
+    if brief_id is None:
+        raise APIError(
+            code="INVALID_BRIEF_ID",
+            message="Invalid brief_id",
+            status_code=400,
+        )
+
+    brief = session.get(Brief, brief_id)
+    if brief is None or brief.assigned_to is None:
+        raise APIError(
+            code="INVALID_BRIEF_ID",
+            message="Invalid brief_id",
+            status_code=400,
+        )
+
+    temporary_user = session.get(User, brief.assigned_to)
+    if temporary_user is None or temporary_user.user_type != UserType.TEMPORARY:
+        raise APIError(
+            code="INVALID_BRIEF_ID",
+            message="Invalid brief_id",
+            status_code=400,
+        )
+
+    return brief, temporary_user
+
+
+def register_user(session: Session, request: RegisterRequest) -> AuthResponse:
+    """Register a new user with email or phone and a password."""
+    from briefchain.api.services import invites as invite_service
+
     email = request.email
     phone = request.phone
 
@@ -60,28 +112,63 @@ def register_user(session: Session, request: RegisterRequest) -> AuthResponse:
 
     existing = _find_existing_user(session, email, phone)
     if existing is not None:
-        if email and existing.email == email:
-            raise APIError(
-                code="EMAIL_ALREADY_REGISTERED",
-                message="The email is already registered",
-                status_code=409,
-            )
-        if phone and existing.phone == phone:
-            raise APIError(
-                code="PHONE_ALREADY_REGISTERED",
-                message="The phone is already registered",
-                status_code=409,
-            )
+        if request.brief_id is not None:
+            _, temporary_user = _require_temporary_brief(session, request.brief_id)
+            if existing.id != temporary_user.id:
+                if email and existing.email == email:
+                    raise APIError(
+                        code="EMAIL_ALREADY_REGISTERED",
+                        message="The email is already registered",
+                        status_code=409,
+                    )
+                if phone and existing.phone == phone:
+                    raise APIError(
+                        code="PHONE_ALREADY_REGISTERED",
+                        message="The phone is already registered",
+                        status_code=409,
+                    )
+        else:
+            if email and existing.email == email:
+                raise APIError(
+                    code="EMAIL_ALREADY_REGISTERED",
+                    message="The email is already registered",
+                    status_code=409,
+                )
+            if phone and existing.phone == phone:
+                raise APIError(
+                    code="PHONE_ALREADY_REGISTERED",
+                    message="The phone is already registered",
+                    status_code=409,
+                )
 
-    user = User(
-        id=uuid4(),
-        email=email,
-        phone=phone,
-        name=request.name,
-        user_type=UserType.REGISTERED,
-        password_hash=get_password_hash(request.password),
-    )
-    session.add(user)
+    upgraded_from_temporary = False
+    if request.brief_id is not None:
+        brief, temporary_user = _require_temporary_brief(session, request.brief_id)
+        user = temporary_user
+        user.user_type = UserType.REGISTERED
+        user.password_hash = get_password_hash(request.password)
+        user.name = request.name
+        user.email = email
+        user.phone = phone
+        user.from_temporary_user_id = temporary_user.id
+        upgraded_from_temporary = True
+        _migrate_active_briefs(session, temporary_user.id, user.id)
+        invite_service.invalidate_invites_for_temporary_user(
+            session=session,
+            temporary_user_id=temporary_user.id,
+            final_user_id=user.id,
+        )
+    else:
+        user = User(
+            id=uuid4(),
+            email=email,
+            phone=phone,
+            name=request.name,
+            user_type=UserType.REGISTERED,
+            password_hash=get_password_hash(request.password),
+        )
+        session.add(user)
+
     session.commit()
     session.refresh(user)
 
@@ -89,22 +176,14 @@ def register_user(session: Session, request: RegisterRequest) -> AuthResponse:
     return AuthResponse(
         user=UserAuthBase.model_validate(user),
         token=token,
+        upgraded_from_temporary=upgraded_from_temporary,
     )
 
 
 def login_user(session: Session, request: LoginRequest) -> AuthResponse:
-    """Authenticate a user with email/phone and password.
+    """Authenticate a user with email/phone and password."""
+    from briefchain.api.services import invites as invite_service
 
-    Args:
-        session: SQLAlchemy database session.
-        request: Login request containing email/phone and password.
-
-    Returns:
-        Authentication response with the user and a JWT token.
-
-    Raises:
-        APIError: If no contact method is provided or credentials are invalid.
-    """
     email = request.email
     phone = request.phone
 
@@ -117,33 +196,52 @@ def login_user(session: Session, request: LoginRequest) -> AuthResponse:
 
     user = _find_existing_user(session, email, phone)
 
-    if (
-        user is None
-        or user.password_hash is None
-        or not verify_password(request.password, user.password_hash)
-    ):
+    if user is None:
         raise APIError(
             code="INVALID_CREDENTIALS",
             message="Invalid email/phone or password",
             status_code=401,
         )
 
+    if user.user_type == UserType.TEMPORARY:
+        raise APIError(
+            code="TEMPORARY_USER_CANNOT_LOGIN",
+            message="Temporary users cannot log in with a password. Please use the invite link.",
+            status_code=401,
+        )
+
+    if user.password_hash is None or not verify_password(request.password, user.password_hash):
+        raise APIError(
+            code="INVALID_CREDENTIALS",
+            message="Invalid email/phone or password",
+            status_code=401,
+        )
+
+    linked_temporary_user: UUID | None = None
+    if request.brief_id is not None:
+        brief, temporary_user = _require_temporary_brief(session, request.brief_id)
+        _migrate_active_briefs(session, temporary_user.id, user.id)
+        user.from_temporary_user_id = temporary_user.id
+        linked_temporary_user = temporary_user.id
+        invite_service.invalidate_invites_for_temporary_user(
+            session=session,
+            temporary_user_id=temporary_user.id,
+            final_user_id=user.id,
+        )
+
+    session.commit()
+    session.refresh(user)
+
     token = create_access_token(user.id)
     return AuthResponse(
         user=UserAuthBase.model_validate(user),
         token=token,
+        linked_temporary_user=linked_temporary_user,
     )
 
 
 def get_current_user_profile(current_user: User) -> UserResponse:
-    """Return the current authenticated user's profile.
-
-    Args:
-        current_user: The authenticated user model.
-
-    Returns:
-        User response with unmasked sensitive fields.
-    """
+    """Return the current authenticated user's profile."""
     return UserResponse.model_validate(serialize_user(current_user, viewer_user_id=current_user.id))
 
 
@@ -153,17 +251,7 @@ def list_users(
     page: int,
     page_size: int,
 ) -> UserListResponse:
-    """Return a paginated list of users with masked sensitive fields.
-
-    Args:
-        session: SQLAlchemy database session.
-        viewer_user_id: ID of the user requesting the list; used for masking.
-        page: 1-based page number.
-        page_size: Number of items per page (will be clamped to [1, 100]).
-
-    Returns:
-        Paginated list of user responses.
-    """
+    """Return a paginated list of users with masked sensitive fields."""
     page = max(1, page)
     page_size = max(1, min(page_size, 100))
 
@@ -198,19 +286,7 @@ def get_user_by_id(
     user_id: UUID,
     viewer_user_id: UUID,
 ) -> UserResponse:
-    """Return a single user's profile with viewer-aware masking.
-
-    Args:
-        session: SQLAlchemy database session.
-        user_id: ID of the user to retrieve.
-        viewer_user_id: ID of the user requesting the profile; used for masking.
-
-    Returns:
-        User response with sensitive fields masked unless the viewer is the owner.
-
-    Raises:
-        APIError: If the requested user does not exist.
-    """
+    """Return a single user's profile with viewer-aware masking."""
     user = session.get(User, user_id)
     if user is None:
         raise APIError(

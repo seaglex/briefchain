@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from briefchain.models.enums import BriefPriority, BriefStatus
 
@@ -109,3 +109,48 @@ class BriefLifecycleResponse(BaseModel):
     brief: BriefDetail
     transfer: BriefTransferResponse | None = None
     message: str | None = None
+    invite: dict | None = None
+
+
+class SendBriefRegisteredRequest(BaseModel):
+    """Request body for sending a brief to a registered user."""
+
+    assigned_to: UUID
+    note: str | None = None
+
+
+class SendBriefExternalRequest(BaseModel):
+    """Request body for sending a brief to an external user via invite."""
+
+    recipient_email: str | None = Field(default=None, examples=["lisi@example.com"])
+    recipient_phone: str | None = Field(default=None, examples=["+8613800000000"])
+    recipient_name: str | None = Field(default=None, max_length=255)
+    note: str | None = None
+    accept_deadline_days: int = Field(default=7, ge=1)
+    complete_deadline_days: int = Field(default=30, ge=1)
+
+
+class SendBriefRequest(BaseModel):
+    """Request body for sending a brief.
+
+    When `is_temporary_user` is true, `recipient_email`/`recipient_phone` are
+    optional and the system creates or reuses a temporary user. When false,
+    `assigned_to` must be provided.
+    """
+
+    is_temporary_user: bool = False
+    assigned_to: UUID | None = None
+    recipient_email: str | None = Field(default=None, examples=["lisi@example.com"])
+    recipient_phone: str | None = Field(default=None, examples=["+8613800000000"])
+    recipient_name: str | None = Field(default=None, max_length=255)
+    note: str | None = None
+    accept_deadline_days: int = Field(default=7, ge=1)
+    complete_deadline_days: int = Field(default=30, ge=1)
+
+    @model_validator(mode="after")
+    def validate_send_request(self) -> "SendBriefRequest":
+        if self.is_temporary_user:
+            return self
+        if self.assigned_to is None:
+            raise ValueError("assigned_to is required when is_temporary_user is false")
+        return self

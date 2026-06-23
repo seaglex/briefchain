@@ -25,6 +25,8 @@ class AuthResponse(BaseModel):
 
     user: UserAuthBase
     token: str
+    upgraded_from_temporary: bool = False
+    linked_temporary_user: UUID | None = None
 
 
 class RegisterRequest(BaseModel):
@@ -34,6 +36,14 @@ class RegisterRequest(BaseModel):
     phone: str | None = Field(default=None, pattern=r"^\+?1?\d{9,15}$", examples=["+8613800000000"])
     name: str = Field(..., min_length=1, max_length=255)
     password: str = Field(..., min_length=6, max_length=128)
+    temporary_user_id: UUID | None = Field(
+        default=None,
+        examples=["00000000-0000-0000-0000-000000000000"],
+    )
+    brief_id: UUID | None = Field(
+        default=None,
+        examples=["00000000-0000-0000-0000-000000000000"],
+    )
 
     @field_validator("email", "phone", mode="before")
     @classmethod
@@ -58,6 +68,14 @@ class LoginRequest(BaseModel):
     email: EmailStr | None = Field(default=None, examples=["user@example.com"])
     phone: str | None = Field(default=None, examples=["+8613800000000"])
     password: str = Field(..., min_length=1, max_length=128)
+    temporary_user_id: UUID | None = Field(
+        default=None,
+        examples=["00000000-0000-0000-0000-000000000000"],
+    )
+    brief_id: UUID | None = Field(
+        default=None,
+        examples=["00000000-0000-0000-0000-000000000000"],
+    )
 
     @field_validator("email", "phone", mode="before")
     @classmethod
