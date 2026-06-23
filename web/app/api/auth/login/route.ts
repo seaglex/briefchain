@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
   });
 
   if (!backendResponse.ok) {
-    const message = await parseBackendError(backendResponse);
+    const { message } = await parseBackendError(backendResponse);
     return NextResponse.json(
       { error: { code: "AUTH_FAILED", message } },
       { status: backendResponse.status }

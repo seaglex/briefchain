@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch, isNonEmpty } from "@/lib/auth";
+import { sendBrief } from "@/lib/invites";
 import UserSelector from "@/components/UserSelector";
 
 interface BriefActionsProps {
@@ -50,6 +51,17 @@ export default function BriefActions({
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [reason, setReason] = useState("");
+
+  // Send mode state
+  const [sendMode, setSendMode] = useState<"registered" | "temporary">("registered");
+  const [recipientName, setRecipientName] = useState("");
+  const [recipientEmailOrPhone, setRecipientEmailOrPhone] = useState("");
+  const [inviteResult, setInviteResult] = useState<{
+    invite_url: string;
+    accept_deadline: string;
+    complete_deadline: string;
+  } | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const handleAction = async (
     path: string,
@@ -103,17 +115,48 @@ export default function BriefActions({
   };
 
   const handleSend = async () => {
-    if (!selectedUserId) {
-      setError("请选择 downstream 用户");
+    if (sendMode === "registered") {
+      if (!selectedUserId) {
+        setError("请选择 downstream 用户");
+        return;
+      }
+      await handleAction(`/api/briefs/${briefId}/send`, {
+        assigned_to: selectedUserId,
+        note: note.trim() || undefined,
+      });
+      resetSendModal();
       return;
     }
-    await handleAction(`/api/briefs/${briefId}/send`, {
-      assigned_to: selectedUserId,
+
+    if (!isNonEmpty(recipientName)) {
+      setError("请填写接收人姓名");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    const trimmedContact = recipientEmailOrPhone.trim();
+    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedContact);
+    const result = await sendBrief(briefId, {
+      is_temporary_user: true,
+      recipient_name: recipientName.trim(),
+      recipient_email: isEmail ? trimmedContact : undefined,
+      recipient_phone: isEmail ? undefined : trimmedContact || undefined,
       note: note.trim() || undefined,
     });
-    setModal(null);
-    setSelectedUserId(null);
-    setNote("");
+    setLoading(false);
+
+    if (!result.ok) {
+      setError(result.message);
+      return;
+    }
+
+    if (result.data.invite) {
+      setInviteResult(result.data.invite);
+    } else {
+      resetSendModal();
+      router.refresh();
+    }
   };
 
   const handleReject = async () => {
@@ -169,6 +212,27 @@ export default function BriefActions({
     setSelectedUserId(null);
     setNote("");
     setReason("");
+    resetSendModal();
+  };
+
+  const resetSendModal = () => {
+    setSendMode("registered");
+    setRecipientName("");
+    setRecipientEmailOrPhone("");
+    setInviteResult(null);
+    setCopied(false);
+  };
+
+  const handleCopyInviteLink = async () => {
+    if (!inviteResult) return;
+    const url = `${window.location.origin}${inviteResult.invite_url}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
   };
 
   const renderModal = () => {
@@ -193,15 +257,61 @@ export default function BriefActions({
           <div className="modal-body">
             {error && <div className="error-message mb-12">{error}</div>}
 
-            {modal === "send" && (
+            {modal === "send" && !inviteResult && (
               <>
                 <div className="form-group">
-                  <label className="form-label">选择 downstream 用户</label>
-                  <UserSelector
-                    selectedUserId={selectedUserId}
-                    onSelect={setSelectedUserId}
-                  />
+                  <label className="form-label">发送方式</label>
+                  <div className="flex gap-8">
+                    <button
+                      type="button"
+                      className={`btn btn-sm ${sendMode === "registered" ? "btn-primary" : ""}`}
+                      onClick={() => setSendMode("registered")}
+                    >
+                      已注册用户
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn btn-sm ${sendMode === "temporary" ? "btn-primary" : ""}`}
+                      onClick={() => setSendMode("temporary")}
+                    >
+                      临时用户
+                    </button>
+                  </div>
                 </div>
+
+                {sendMode === "registered" && (
+                  <div className="form-group">
+                    <label className="form-label">选择 downstream 用户</label>
+                    <UserSelector
+                      selectedUserId={selectedUserId}
+                      onSelect={setSelectedUserId}
+                    />
+                  </div>
+                )}
+
+                {sendMode === "temporary" && (
+                  <>
+                    <div className="form-group">
+                      <label className="form-label">接收人姓名 *</label>
+                      <input
+                        type="text"
+                        value={recipientName}
+                        onChange={(e) => setRecipientName(e.target.value)}
+                        placeholder="例如：李四"
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">邮箱或手机号（可选）</label>
+                      <input
+                        type="text"
+                        value={recipientEmailOrPhone}
+                        onChange={(e) => setRecipientEmailOrPhone(e.target.value)}
+                        placeholder="example@email.com 或 13800000000"
+                      />
+                    </div>
+                  </>
+                )}
+
                 <div className="form-group">
                   <label className="form-label">备注（可选）</label>
                   <textarea
@@ -212,6 +322,30 @@ export default function BriefActions({
                   />
                 </div>
               </>
+            )}
+
+            {modal === "send" && inviteResult && (
+              <div className="form-group">
+                <label className="form-label">邀请链接已生成</label>
+                <div className="flex gap-8 items-start">
+                  <input
+                    type="text"
+                    readOnly
+                    value={`${typeof window !== "undefined" ? window.location.origin : ""}${inviteResult.invite_url}`}
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleCopyInviteLink}
+                  >
+                    {copied ? "已复制" : "复制"}
+                  </button>
+                </div>
+                <p className="text-3 mt-8" style={{ fontSize: 12 }}>
+                  接受截止：{new Date(inviteResult.accept_deadline).toLocaleString("zh-CN")}
+                </p>
+              </div>
             )}
 
             {(modal === "reject" || modal === "complete" || modal === "blocked") && (
@@ -235,23 +369,36 @@ export default function BriefActions({
 
           <div className="modal-footer">
             <button className="btn" onClick={closeModal} disabled={loading}>
-              取消
+              {modal === "send" && inviteResult ? "关闭" : "取消"}
             </button>
-            <button
-              className="btn btn-primary"
-              onClick={
-                modal === "send"
-                  ? handleSend
-                  : modal === "reject"
-                    ? handleReject
-                    : modal === "complete"
-                      ? handleComplete
-                      : handleBlocked
-              }
-              disabled={loading}
-            >
-              {loading ? "提交中..." : "确认"}
-            </button>
+            {!(modal === "send" && inviteResult) && (
+              <button
+                className="btn btn-primary"
+                onClick={
+                  modal === "send"
+                    ? handleSend
+                    : modal === "reject"
+                      ? handleReject
+                      : modal === "complete"
+                        ? handleComplete
+                        : handleBlocked
+                }
+                disabled={loading}
+              >
+                {loading ? "提交中..." : "确认"}
+              </button>
+            )}
+            {modal === "send" && inviteResult && (
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  closeModal();
+                  router.refresh();
+                }}
+              >
+                完成
+              </button>
+            )}
           </div>
         </div>
       </div>

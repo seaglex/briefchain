@@ -44,7 +44,6 @@ export default function NewBriefPage() {
     });
     setLoading(false);
 
-    console.log(result)
     if (!result.ok) {
       setError(result.message);
       return;

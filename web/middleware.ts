@@ -3,8 +3,10 @@ import type { NextRequest } from "next/server";
 import { SESSION_COOKIE_NAME } from "./lib/auth";
 
 const PUBLIC_PATHS = ["/login", "/register"];
+const PUBLIC_PATH_PREFIXES = ["/invites/"];
 const EXCLUDED_PATH_PREFIXES = [
   "/api/auth/",
+  "/api/invites/",
   "/_next/",
   "/favicon.ico",
   "/next.svg",
@@ -22,7 +24,11 @@ export function middleware(request: NextRequest) {
   const hasSession = request.cookies.has(SESSION_COOKIE_NAME);
 
   // Unauthenticated users can only access public pages.
-  if (!hasSession && !PUBLIC_PATHS.includes(pathname)) {
+  if (
+    !hasSession &&
+    !PUBLIC_PATHS.includes(pathname) &&
+    !PUBLIC_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix))
+  ) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Suspense } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/auth";
 
@@ -8,7 +9,7 @@ interface SidebarProps {
   currentUserName?: string;
 }
 
-export default function Sidebar({ currentUserName = "用户" }: SidebarProps) {
+function SidebarInner({ currentUserName = "用户" }: SidebarProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const role = searchParams.get("role") || "assigned";
@@ -124,5 +125,13 @@ export default function Sidebar({ currentUserName = "用户" }: SidebarProps) {
         </svg>
       </div>
     </div>
+  );
+}
+
+export default function Sidebar(props: SidebarProps) {
+  return (
+    <Suspense fallback={<div className="sidebar" />}>
+      <SidebarInner {...props} />
+    </Suspense>
   );
 }
