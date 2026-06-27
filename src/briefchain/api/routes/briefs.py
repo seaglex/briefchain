@@ -73,22 +73,22 @@ def editing_action(
     session: SessionDep,
     user_id: CurrentUserIdDep,
     brief_id: UUID,
-    action: Annotated[str, Query(pattern="^(patch|review)$")],
+    action: Annotated[str, Query(pattern="^(patch|submit-review)$")],
     request: BriefPatchRequest | BriefReviewRequest | None = None,
 ) -> BriefDetail:
     """Perform an editing-phase action on a brief."""
-    if action == "patch":
-        if request is None or not isinstance(request, BriefPatchRequest):
-            raise brief_service.APIError(
-                code="INVALID_REQUEST",
-                message="PATCH request body required",
-                status_code=422,
-            )
-        return brief_service.patch_brief(session, brief_id, user_id, request)
+    if action == "submit-review":
+        if request is None:
+            request = BriefReviewRequest()
+        return brief_service.review_brief(session, brief_id, user_id, request)
 
-    if request is None:
-        request = BriefReviewRequest()
-    return brief_service.review_brief(session, brief_id, user_id, request)
+    if request is None or not isinstance(request, BriefPatchRequest):
+        raise brief_service.APIError(
+            code="INVALID_REQUEST",
+            message="PATCH request body required",
+            status_code=422,
+        )
+    return brief_service.patch_brief(session, brief_id, user_id, request)
 
 
 @router.post("/{brief_id}/transfer", response_model=BriefLifecycleResponse)
@@ -148,22 +148,8 @@ def upstream_action(
             status_code=422,
         )
 
-    match action:
-        case "cancel":
-            return brief_service.cancel_brief(session, brief_id, user_id, request.content)
-        case "suspend":
-            return brief_service.suspend_brief(session, brief_id, user_id, request.content)
-        case "resume":
-            return brief_service.resume_brief(session, brief_id, user_id, request.content)
-        case "approve":
-            return brief_service.approve_brief(session, brief_id, user_id, request.content)
-        case "reject_submit":
-            return brief_service.reject_submit_brief(session, brief_id, user_id, request.content)
-
-    raise brief_service.APIError(
-        code="INVALID_ACTION",
-        message=f"Unsupported upstream action: {action}",
-        status_code=400,
+    return brief_service.upstream_action(
+        session, brief_id, user_id, action, request.content
     )
 
 
@@ -182,46 +168,19 @@ def downstream_action(
     if request is None:
         request = DownstreamActionRequest()
 
-    match action:
-        case "process":
-            feedback = brief_service.downstream_process(
-                session, brief_id, user_id, request.content, request.attachments
-            )
-            brief = brief_service.get_brief_detail(session, brief_id)
-            return BriefLifecycleResponse(brief=brief, feedback=feedback)
-        case "submit":
-            if not request.content:
-                raise brief_service.APIError(
-                    code="INVALID_REQUEST",
-                    message="Submit content required",
-                    status_code=422,
-                )
-            return brief_service.downstream_submit(
-                session, brief_id, user_id, request.content, request.attachments
-            )
-        case "open":
-            if not request.content:
-                raise brief_service.APIError(
-                    code="INVALID_REQUEST",
-                    message="Open reason required",
-                    status_code=422,
-                )
-            return brief_service.downstream_open(session, brief_id, user_id, request.content)
-        case "delegate":
-            return brief_service.downstream_delegate(session, brief_id, user_id, request.content)
-        case "block":
-            if not request.content:
-                raise brief_service.APIError(
-                    code="INVALID_REQUEST",
-                    message="Block reason required",
-                    status_code=422,
-                )
-            return brief_service.downstream_block(
-                session, brief_id, user_id, request.content, request.attachments
-            )
+    if action in {"submit", "open", "block"} and not request.content:
+        action_label = {"submit": "Submit", "open": "Open", "block": "Block"}[action]
+        raise brief_service.APIError(
+            code="INVALID_REQUEST",
+            message=f"{action_label} content required",
+            status_code=422,
+        )
 
-    raise brief_service.APIError(
-        code="INVALID_ACTION",
-        message=f"Unsupported downstream action: {action}",
-        status_code=400,
+    return brief_service.downstream_action(
+        session,
+        brief_id,
+        user_id,
+        action,
+        request.content,
+        request.attachments,
     )

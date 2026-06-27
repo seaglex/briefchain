@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Generate invite link for external recipient
-The system SHALL create an invite link when `POST /briefs/:brief_id/send` receives `is_temporary_user=true` and an optional `recipient_email` or `recipient_phone`.
+The system SHALL create an invite link when `POST /briefs/:brief_id/transfer?action=send` receives `is_temporary_user=true` and an optional `recipient_email` or `recipient_phone`.
 
 #### Scenario: Send with is_temporary_user and no contact creates anonymous temporary user
 - **WHEN** an authenticated user sends a reviewed brief with `is_temporary_user=true` and no `recipient_email` or `recipient_phone`
@@ -46,8 +46,8 @@ The system SHALL validate the HMAC signature, expiration, and database nonce bef
 The system SHALL allow a recipient to accept a sent brief using only the invite token, without JWT authentication.
 
 #### Scenario: Accept with valid token
-- **WHEN** a `POST /invites/{token}/accept` request uses a valid token and the brief status is `sent`
-- **THEN** the system changes the brief status to `accepted`, records `accepted_at` in the transfer history, and returns the updated brief and transfer
+- **WHEN** a `POST /invites/{token}/transfer?action=accept` request uses a valid token and the brief `upstream_state` is `sent`
+- **THEN** the system sets `upstream_state` to `in_process` and `downstream_state` to `opened`, records `accepted_at` in the transfer history, and returns the updated brief and transfer
 
 #### Scenario: Accept with invalidated token fails
 - **WHEN** a recipient tries to accept using a token already marked invalidated
@@ -57,31 +57,40 @@ The system SHALL allow a recipient to accept a sent brief using only the invite 
 The system SHALL allow a recipient to reject a sent brief using only the invite token and provide a rejection reason.
 
 #### Scenario: Reject with valid token
-- **WHEN** a `POST /invites/{token}/reject` request uses a valid token, the brief status is `sent`, and a reason is provided
-- **THEN** the system changes the brief status to `draft`, records `rejected_at` and `rejection_reason` in the transfer history, and returns the updated brief and transfer
+- **WHEN** a `POST /invites/{token}/transfer?action=reject` request uses a valid token, the brief `upstream_state` is `sent`, and a reason is provided
+- **THEN** the system sets `upstream_state` to `editing`, clears `downstream_state` (sets to `null`), records `rejected_at` and `rejection_reason` in the transfer history, and returns the updated brief and transfer
 
 #### Scenario: Reject without reason fails
 - **WHEN** a reject request omits the `reason` field
 - **THEN** the system returns `422 Unprocessable Entity`
 
-### Requirement: Mark brief blocked via invite token
-The system SHALL allow a recipient to report a brief as blocked using only the invite token and provide a reason.
+### Requirement: Downstream actions via invite token
+The system SHALL allow a recipient to perform downstream actions on an `in_process` brief using only the invite token. All actions map to `POST /invites/{token}/downstream-actions?action=<action>` and use the same request/response shape as the authenticated downstream-actions endpoint.
+
+#### Scenario: Submit completion with valid token
+- **WHEN** a `POST /invites/{token}/downstream-actions?action=submit` request uses a valid token, the brief `upstream_state` is `in_process`, and `content` completion notes are provided
+- **THEN** the system sets `downstream_state` to `submitted`, creates a feedback record with `type` "submit" and `is_to_down` false, and returns the updated brief and feedback
+
+#### Scenario: Submit without content fails
+- **WHEN** a submit request omits the `content` field
+- **THEN** the system returns `422 Unprocessable Entity`
 
 #### Scenario: Block with valid token
-- **WHEN** a `POST /invites/{token}/blocked` request uses a valid token, the brief status is `accepted`, and a reason is provided
-- **THEN** the system changes the brief status to `blocked`, creates a `blocked` feedback with the provided reason, and returns the updated brief and feedback
+- **WHEN** a `POST /invites/{token}/downstream-actions?action=block` request uses a valid token, the brief `upstream_state` is `in_process`, and a `content` blocker reason is provided
+- **THEN** the system sets `downstream_state` to `blocked`, creates a feedback record with `type` "block" and `is_to_down` false, and returns the updated brief and feedback
 
-#### Scenario: Block without reason fails
-- **WHEN** a block request omits the `reason` field
+#### Scenario: Block without content fails
+- **WHEN** a block request omits the `content` field
 - **THEN** the system returns `422 Unprocessable Entity`
 
-### Requirement: Mark brief done via invite token
-The system SHALL allow a recipient to mark a brief as done using only the invite token and provide a completion result.
+#### Scenario: Open with valid token
+- **WHEN** a `POST /invites/{token}/downstream-actions?action=open` request uses a valid token, the brief `upstream_state` is `in_process`, and a `content` reopen reason is provided
+- **THEN** the system sets `downstream_state` to `opened`, creates a feedback record with `type` "open" and `is_to_down` false, and returns the updated brief and feedback
 
-#### Scenario: Done with valid token
-- **WHEN** a `POST /invites/{token}/done` request uses a valid token, the brief status is `accepted`, and a result is provided
-- **THEN** the system changes the brief status to `done`, creates a `completion` feedback with the provided result, and returns the updated brief and feedback
+#### Scenario: Delegate with valid token
+- **WHEN** a `POST /invites/{token}/downstream-actions?action=delegate` request uses a valid token and the brief `upstream_state` is `in_process`
+- **THEN** the system sets `downstream_state` to `delegated`, creates a feedback record with `type` "delegate" and `is_to_down` false, and returns the updated brief and feedback
 
-#### Scenario: Done without result fails
-- **WHEN** a done request omits the `result` field
-- **THEN** the system returns `422 Unprocessable Entity`
+#### Scenario: Progress feedback with valid token
+- **WHEN** a `POST /invites/{token}/downstream-actions?action=process` request uses a valid token and the brief `upstream_state` is `in_process`
+- **THEN** the system leaves `upstream_state` and `downstream_state` unchanged and creates a feedback record with `type` "progress" and `is_to_down` false

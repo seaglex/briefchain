@@ -39,6 +39,7 @@ export interface BriefDetail {
   current_version_status: string | null;
   version: number;
   is_current: boolean;
+  draft_version: number | null;
   attachments: unknown[];
   created_at: string;
   updated_at: string;
@@ -87,7 +88,7 @@ export interface RejectInviteRequest {
 }
 
 export interface BlockInviteRequest {
-  reason: string;
+  content: string;
 }
 
 export interface SubmitInviteRequest {
@@ -95,10 +96,14 @@ export interface SubmitInviteRequest {
 }
 
 export interface OpenInviteRequest {
-  reason: string;
+  content: string;
 }
 
 export interface DelegateInviteRequest {
+  content?: string;
+}
+
+export interface ProcessInviteRequest {
   content?: string;
 }
 
@@ -107,50 +112,51 @@ export async function getInvite(token: string) {
 }
 
 export async function acceptInvite(token: string, body?: AcceptInviteRequest) {
-  return apiFetch<SendBriefResponse>(`/api/invites/${token}/accept`, {
+  return apiFetch<SendBriefResponse>(`/api/invites/${token}/transfer?action=accept`, {
     method: "POST",
     body: JSON.stringify(body ?? {}),
   });
 }
 
 export async function rejectInvite(token: string, body: RejectInviteRequest) {
-  return apiFetch<SendBriefResponse>(`/api/invites/${token}/reject`, {
+  return apiFetch<SendBriefResponse>(`/api/invites/${token}/transfer?action=reject`, {
     method: "POST",
     body: JSON.stringify(body),
   });
 }
 
-export async function blockInvite(token: string, body: BlockInviteRequest) {
-  return apiFetch<{ id: string; type: string; content: string; from_user: UserRef; created_at: string }>(
-    `/api/invites/${token}/block`,
-    {
-      method: "POST",
-      body: JSON.stringify(body),
-    }
-  );
+export async function processInvite(token: string, body?: ProcessInviteRequest) {
+  return apiFetch<{ brief: BriefDetail; feedback: Feedback }>(`/api/invites/${token}/downstream-actions?action=process`, {
+    method: "POST",
+    body: JSON.stringify(body ?? {}),
+  });
 }
 
 export async function submitInvite(token: string, body: SubmitInviteRequest) {
-  return apiFetch<{ id: string; type: string; content: string; from_user: UserRef; created_at: string }>(
-    `/api/invites/${token}/submit`,
-    {
-      method: "POST",
-      body: JSON.stringify(body),
-    }
-  );
+  return apiFetch<{ brief: BriefDetail }>(`/api/invites/${token}/downstream-actions?action=submit`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 export async function openInvite(token: string, body: OpenInviteRequest) {
-  return apiFetch<BriefDetail>(`/api/invites/${token}/open`, {
+  return apiFetch<{ brief: BriefDetail }>(`/api/invites/${token}/downstream-actions?action=open`, {
     method: "POST",
     body: JSON.stringify(body),
   });
 }
 
 export async function delegateInvite(token: string, body?: DelegateInviteRequest) {
-  return apiFetch<BriefDetail>(`/api/invites/${token}/delegate`, {
+  return apiFetch<{ brief: BriefDetail }>(`/api/invites/${token}/downstream-actions?action=delegate`, {
     method: "POST",
     body: JSON.stringify(body ?? {}),
+  });
+}
+
+export async function blockInvite(token: string, body: BlockInviteRequest) {
+  return apiFetch<{ brief: BriefDetail }>(`/api/invites/${token}/downstream-actions?action=block`, {
+    method: "POST",
+    body: JSON.stringify(body),
   });
 }
 

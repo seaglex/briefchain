@@ -24,6 +24,7 @@ export interface BriefDetail {
   current_version_status: string | null;
   version: number;
   is_current: boolean;
+  draft_version: number | null;
   status_changed_by_id: string;
   status_changed_by_name: string;
   status_changed_at: string;
@@ -118,6 +119,9 @@ export default function BriefDetailView({
             <span className={`badge ${downstreamStateClass(brief.downstream_state)}`}>
               {brief.downstream_state}
             </span>
+          )}
+          {brief.draft_version && (
+            <span className="badge badge-draft">Draft v{brief.draft_version}</span>
           )}
           <span className={`badge ${priorityClass(brief.priority)}`}>
             {brief.priority.toUpperCase()}

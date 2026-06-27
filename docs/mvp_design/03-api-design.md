@@ -1,7 +1,7 @@
 # BriefChain REST API 设计文档
 
-> 版本：MVP v0.8
-> 最后更新：2026-06-27
+> 版本：MVP v0.5
+> 最后更新：2026-06-28
 > 基础路径：`/api/v1`
 
 ---
@@ -14,10 +14,11 @@
 - **状态码**：标准 HTTP 状态码，错误返回统一格式
 - **分页**：游标分页（cursor-based），避免 offset 性能问题
 - **API 聚类**：端点按状态阶段分为 4 组，每组用路径表达阶段 + `action` 参数表达动作，结构完全一致：
-  - `POST /briefs/:id/editing?action={patch | review}`
-  - `POST /briefs/:id/transfer?action={send | accept | reject}`
-  - `POST /briefs/:id/upstream-actions?action={cancel | suspend | resume | approve | reject_submit | update}`
-  - `POST /briefs/:id/downstream-actions?action={process | submit | open | delegate | block}`
+  - `POST /briefs/:id/editing?action={patch | submit-review}` — 只操作 version，不碰 brief 状态
+  - `POST /briefs/:id/transfer?action={send | accept | reject}` — send 是邀约阶段桥梁（version↔state）
+  - `POST /briefs/:id/upstream-actions?action={cancel | suspend | resume | approve | reject_submit | update}` — update 同时操作 version + brief，其余只操作 brief 状态
+  - `POST /briefs/:id/downstream-actions?action={process | submit | open | delegate | block}` — 只操作 brief 状态
+- **version 与 state 解耦**：patch / submit-review 只操作 version.status，不检查 upstream_state；accept / cancel / suspend 等只操作 brief 状态，不碰 version。send 是邀约阶段的桥梁（editing/sent → transfer_history），update 是合约期间的版本更新（in_process → feedbacks，两者对 version 操作相同但记录位置不同）
 - **冗余存储人名**：briefs / feedbacks / transfers / chains 表冗余存储用户名字（name 快照），合约语义上名字是操作时的签名，列表查询不需要 JOIN users 表
 
 ---
@@ -183,7 +184,7 @@ Response 204
 > | 模式 | 包含字段 | 使用场景 |
 > |---|---|---|
 > | **列表模式** | `brief_id`, `title`, `upstream_state`, `downstream_state`, `priority`, `created_by_id`, `created_by_name`, `assigned_to_id`, `assigned_to_name`, `status_changed_by_id`, `status_changed_by_name`, `status_changed_at`, `updated_at` | 2.2 列表查询 |
-> | **详情模式** | 列表模式 + `content`, `attachments`, `current_version` | 2.3 获取单个 Brief |
+> | **详情模式** | 列表模式 + `content`, `attachments`, `current_version`, `draft_version` | 2.3 获取单个 Brief |
 > | **版本模式** | 详情模式 + `version`, `is_current` | 2.3 `?version=` 参数 |
 >
 > **人名冗余存储**：所有涉及用户的字段（created_by / assigned_to / from_user / to_user）都冗余存储 name（快照），响应中拆成 `id` + `name` 两个平级字段，不嵌套成对象。需要用户完整信息请调 `GET /users/:user_id`（11.2）。
@@ -286,6 +287,7 @@ Response 200
     "parent_id": null,
     "version": 1,              // 本次返回的版本号
     "is_current": true,         // 是否为当前版本
+    "draft_version": null,      // 当前可编辑的 draft 版本号（null = 无 draft）；前端编辑时自动 load 此版本
     "upstream_state": "editing",
     "downstream_state": null,
     "title": "...",
@@ -308,17 +310,23 @@ Response 200
 
 > user_id 从 JWT 解析，有读权限即可访问（created_by 全权限，assigned_to 下游权限，其他人只读）
 > 通过 `?version=` 参数可获取历史版本，无需单独调用版本详情
+> **draft_version 逻辑：**
+> - current_version = null → 返回最新 draft 版本内容，draft_version = 该版本号
+> - current_version = N，存在 N+1 draft → 返回 vN 内容（sent），draft_version = N+1
+> - current_version = N，无更高版本 → 返回 vN 内容，draft_version = null
+> - downstream 只看 current_version 内容（看不到 draft）；upstream 编辑时自动 load draft_version
 
 ---
 
 ## 3. Editing 端点（`/briefs/:brief_id/editing`）
 
-> 编辑阶段只在 upstream_state = editing 时可用。这些端点只修改版本内容，不改变 upstream_state / downstream_state。
+> 编辑端点只操作 version（内容和 status），不改变 upstream_state / downstream_state。
+> patch 和 submit-review 只看 version.status，不检查 upstream_state（只要 upstream_state 不是 cancelled/done 终态即可）。
 > 统一入口，通过 `action` 参数指定具体动作。
 
 `POST /briefs/:brief_id/editing`
 
-### 3.1 patch（更新内容，仅 editing 状态）
+### 3.1 patch（更新内容）
 
 ```json
 // Request
@@ -334,10 +342,11 @@ Response 200
 {
   "brief": {
     "brief_id": "guid",
-    "upstream_state": "editing",
-    "downstream_state": null,
-    "current_version": null,    // 还没 sent，current_version 不变
-    "title": "新标题",
+    "upstream_state": "editing",    // 不变
+    "downstream_state": null,       // 不变
+    "current_version": null,        // 不变（patch 不碰 current_version）
+    "draft_version": 1,             // 当前可编辑的 draft 版本号
+    "title": "新标题",              // draft 版本的标题（非 briefs.title）
     "priority": "p0",
     "estimated_man_days": 3,
     "created_by_id": "guid",
@@ -350,22 +359,24 @@ Response 200
     "created_at": "2026-06-20T22:00:00Z",
     "updated_at": "2026-06-20T22:10:00Z"
   },
-  "version": 1
+  "version": 1,
+  "version_status": "draft"         // patch 后 version.status
 }
 ```
 
-> user_id 从 JWT 解析，校验 = created_by，且 upstream_state = editing
-> **版本行为：** patch 修改当前 draft 版本的内容，不创建新版本
-> - 如果当前版本 status=draft（从未 sent）→ 直接修改该版本，version 不变，briefs.title/priority 同步更新
-> - 如果当前版本 status=sent（被 reject 回 editing）→ 创建新 draft 版本 v(n+1)，briefs.current_version 不变（仍指向旧 sent 版本），briefs.title/priority 不变
-> 新版本号只有在 transfer 端点 send 或 upstream-actions update 走完整 draft→reviewed→sent 流程后才写入 briefs.current_version
+> user_id 从 JWT 解析，校验 = created_by，且 upstream_state 不是 cancelled/done
+> **版本行为（只看 version.status，不看 upstream_state）：**
+> - version.status = draft → 原地修改，version 不变
+> - version.status = reviewed → 原地修改，status 重置为 draft
+> - version.status = sent → 不能修改，自动创建新版本 v(n+1) draft；如已存在 v(n+1) 则报错
+> - briefs.current_version / title / priority 不变（只有 send 才更新这些字段）
 
-### 3.2 review（提交审查，版本 draft → reviewed）
+### 3.2 submit-review（提交审查，版本 draft → reviewed）
 
 ```json
 // Request
 {
-  "action": "review",
+  "action": "submit-review",
   "note": "请审查"   // 可选
 }
 
@@ -388,9 +399,9 @@ Response 200
 }
 ```
 
-> user_id 从 JWT 解析，校验 = created_by
+> user_id 从 JWT 解析，校验 = created_by，且 upstream_state 不是 cancelled/done
 > 版本状态：当前 draft 版本 → reviewed（arbiter_review_id 填入 brief_versions）
-> upstream_state 不变（editing 统一表达编写阶段，draft/reviewed 只在版本层面区分）
+> upstream_state 不变（patch / submit-review 只操作 version，不碰 brief 状态）
 > MVP 阶段：跳过 Arbiter，直接转 reviewed（arbiter_review_id 记录 force_skipped）
 > 后续：调用 Arbiter LLM，通过才转 reviewed
 
@@ -403,9 +414,20 @@ Response 200
 
 `POST /briefs/:brief_id/transfer`
 
-### 4.1 send（邀约：editing → sent）
+### 4.1 send（邀约：version→sent，brief 进入邀约阶段）
 
-通过 `is_temporary_user` 参数区分两种发送方式：
+send 处理两种邀约场景，都记录在 brief_transfer_history：
+
+| brief 状态 | send 效果 | transfer_history |
+|-----------|----------|-----------------|
+| editing | 首次发送：current_version null→N，brief editing→sent | ✅ 新记录 |
+| sent | 替换邀约：current_version 更新，brief 状态不变 | ✅ 新记录 |
+
+> sent 状态下也允许 send：upstream 发出邀约后、downstream 响应前，upstream 可以修改并重新发送，代价更小（还没建立合约）。
+
+**参数随场景不同：**
+- editing（首次发送）→ assigned_to 为空，需选择接收方（`assigned_to` 或 `is_temporary_user`）
+- sent（替换邀约）→ assigned_to 已存在，无需重新选择（如需更换接收方仍可传参）
 
 **方式一：发送给已注册用户（`is_temporary_user=false` 或缺省）**
 
@@ -460,15 +482,18 @@ Response 200
 ```
 
 > 校验规则：
-> - user_id 从 JWT 解析，校验 = created_by
-> - upstream_state 必须为 editing，版本必须为 reviewed（或 MVP: force_skipped）
+> - user_id 从 JWT 解析，校验 = created_by，且 upstream_state = editing 或 sent
+> - 版本必须为 reviewed（或 MVP: force_skipped）
 > - `is_temporary_user=false`：必须有 `assigned_to`
 > - `is_temporary_user=true`：`recipient_email` 和 `recipient_phone` 至多填一个（可都不填）；无 `assigned_to`
 > - 方式二查找逻辑（详见 05-invite-link-design.md 第 6.1 节）
 > **版本同步：** sent 时当前版本 status → sent，同步更新 briefs.current_version / title / priority / expected_completion_at
+> **brief 状态变更：**
+> - 从 editing 发送：upstream_state editing → sent
+> - 从 sent 发送：upstream_state 不变（替换邀约），transfer_history 新增记录
 > transfer_history 记录 from_user_name / to_user_name（冗余快照）
 > transfer_history.arbiter_review_id 从 brief_versions.arbiter_review_id 读取
-> **已建立合约后推送新版本，用 upstream-actions 的 update（5.5）**
+> **合约期间推送新版本（in_process 状态），用 upstream-actions 的 update（5.5）**
 
 ### 4.2 accept（邀约：sent → in_process）
 
@@ -515,6 +540,7 @@ Response 200
 
 > upstream 在 brief 被接单后（upstream_state = in_process / suspended）的操作。
 > 统一入口，通过 `action` 参数指定具体动作。
+> update 推送新版本（合约期间），与 send（邀约阶段）对 version 的操作相同，但记录在 feedbacks 而非 transfer_history。
 
 `POST /briefs/:brief_id/upstream-actions`
 
@@ -574,6 +600,8 @@ Response 200
 
 ### 5.3 approve（验收通过）
 
+> downstream_state 保留原状态（便于审计），不是 → null。
+
 ```json
 // Request
 {
@@ -583,13 +611,13 @@ Response 200
 
 // Response 200
 {
-  "brief": { "upstream_state": "done", "downstream_state": null, "status_changed_by_id": "guid", "status_changed_by_name": "张三", "status_changed_at": "...", ... },
+  "brief": { "upstream_state": "done", "downstream_state": "submitted", "status_changed_by_id": "guid", "status_changed_by_name": "张三", "status_changed_at": "...", ... },
   "feedback": { "id": "guid", "is_to_down": true, "type": "approve", "from_user_id": "guid", "from_user_name": "张三", "to_user_id": "guid", "to_user_name": "李四", ... }
 }
 ```
 
 > user_id 从 JWT 解析，校验 = created_by，且 upstream_state = in_process + downstream_state = submitted
-> upstream_state → done，downstream_state → null。done 是终态
+> upstream_state → done（终态），downstream_state 保留原值（submitted）便于审计
 
 ### 5.4 reject_submit（打回提交）
 
@@ -612,7 +640,9 @@ Response 200
 > brief 内容不变，downstream 需继续修改后重新提交
 > downstream 不能 block 此动作（打回是强制合约动作）
 
-### 5.5 update（推送新版本）
+### 5.5 update（推送新版本 — 合约期间更新）
+
+upstream 在合约期间（in_process）推送新版本。与 send 对 version 的操作完全相同（version→sent, current_version 更新），但记录在 feedbacks 而非 transfer_history。
 
 ```json
 // Request
@@ -632,11 +662,12 @@ Response 200
 }
 ```
 
-> user_id 从 JWT 解析，校验 = created_by，且 upstream_state = in_process（只要不是 done/cancelled）
-> **版本流转：** update 走完整版本生命周期（MVP: auto-pass）：
+> user_id 从 JWT 解析，校验 = created_by，且 upstream_state = in_process
+> **与 send 的区别：** send 用于邀约阶段（editing/sent → transfer_history），update 用于合约期间（in_process → feedbacks）。两者对 version 的操作相同（version→sent, current_version 更新），但记录位置不同——send 是初始交接，update 是合约期通知
+> **版本流转（MVP: auto-pass）：**
 > 1. 创建新版本 v(n+1): draft
 > 2. 自动提交 Arbiter 审查 → v(n+1): reviewed（arbiter_review_id 填入，MVP: force_skipped）
-> 3. 自动 sent → v(n+1): sent（v(n) 仍为 sent，但 briefs.current_version 增大自动作废）
+> 3. 自动 sent → v(n+1): sent（v(n) 仍为 sent，briefs.current_version 增大自动作废）
 > 4. briefs.current_version = n+1，briefs.title/priority 同步
 > 5. downstream_state → opened（强制重开，需求变了下游必须基于新版本重新执行）
 > 6. 创建 feedback (type=update, is_to_down=true)
@@ -649,111 +680,43 @@ Response 200
 > downstream 在 brief 被接单后（upstream_state = in_process）的操作。
 > 统一入口，通过 `action` 参数指定具体动作。
 > downstream 自由控制 downstream_state（可从任意下游状态切换）。
+> 所有 action 共用相同的 Request/Response 结构，差异仅为 `action` 值和 `content` 是否必填。
 
 `POST /briefs/:brief_id/downstream-actions`
 
-### 6.1 process（进度更新）
-
+**通用 Request：**
 ```json
-// Request
 {
-  "action": "process",
-  "content": "已完成接口层优化，预计明天完成前端集成",   // 可空
-  "attachments": []                                   // 可选
-}
-
-// Response 200
-{
-  "brief": { ... },   // 状态不变
-  "feedback": { "id": "guid", "is_to_down": false, "type": "progress", "from_user_id": "guid", "from_user_name": "李四", "to_user_id": "guid", "to_user_name": "张三", ... }
+  "action": "<action>",
+  "content": "...",        // 按类型必填或可空（见下方表格）
+  "attachments": []        // 可选
 }
 ```
 
-> user_id 从 JWT 解析，校验 = assigned_to，upstream_state = in_process
-> 不改变 upstream_state / downstream_state，创建 progress feedback
-
-### 6.2 submit（提交完成）
-
+**通用 Response：**
 ```json
-// Request
 {
-  "action": "submit",
-  "content": "已完成所有优化，首屏加载时间降至 1.2s...",   // 必填，完成说明
-  "attachments": []                                      // 可选，证据附件
-}
-
-// Response 200
-{
-  "brief": { "upstream_state": "in_process", "downstream_state": "submitted", "status_changed_by_id": "guid", "status_changed_by_name": "李四", "status_changed_at": "...", ... },
-  "feedback": { "id": "guid", "is_to_down": false, "type": "submit", "from_user_id": "guid", "from_user_name": "李四", "to_user_id": "guid", "to_user_name": "张三", ... }
+  "brief": { "upstream_state": "in_process", "downstream_state": "<新状态>", ... },
+  "feedback": { "id": "guid", "is_to_down": false, "type": "<action>", ... }
 }
 ```
 
-> user_id 从 JWT 解析，校验 = assigned_to，upstream_state = in_process
-> downstream_state → submitted（可从任意下游状态发起）
-> 创建 feedback (type=submit, is_to_down=false)
+**校验规则（通用）：**
+- user_id 从 JWT 解析，校验 = assigned_to，upstream_state = in_process
+- 不改变 upstream_state，只改变 downstream_state
 
-### 6.3 open（主动重开）
+**action 差异表：**
 
-```json
-// Request
-{
-  "action": "open",
-  "content": "提交后发现还有遗漏，主动撤回重做"   // 必填，重开原因
-}
+| action | downstream_state 变更 | content | 说明 |
+|--------|---------------------:|--------:|------|
+| process | 不变（进度更新） | 可空 | 创建 feedback (type=progress) |
+| submit | → submitted | 必填 | 创建 feedback (type=submit)，需 Arbiter 审查（MVP 跳过） |
+| open | → opened | 必填 | 创建 feedback (type=open)，常见：从 submitted 撤回 |
+| delegate | → delegated | **可空** | 创建 feedback (type=delegate)，通知 upstream 拆解进展 |
+| block | → blocked | 必填 | 创建 feedback (type=block)，通知 upstream 需介入 |
 
-// Response 200
-{
-  "brief": { "upstream_state": "in_process", "downstream_state": "opened", "status_changed_by_id": "guid", "status_changed_by_name": "李四", "status_changed_at": "...", ... },
-  "feedback": { "id": "guid", "is_to_down": false, "type": "open", "from_user_id": "guid", "from_user_name": "李四", "to_user_id": "guid", "to_user_name": "张三", ... }
-}
-```
-
-> user_id 从 JWT 解析，校验 = assigned_to，upstream_state = in_process
-> downstream_state → opened（可从 submitted/delegated/blocked 发起）
-> 常见场景：从 submitted 撤回（自己觉得做得不够好）
-> 创建 feedback (type=open, is_to_down=false)
-
-### 6.4 delegate（拆解委派）
-
-```json
-// Request
-{
-  "action": "delegate",
-  "content": "已拆解为 3 个子任务"   // 可空
-}
-
-// Response 200
-{
-  "brief": { "upstream_state": "in_process", "downstream_state": "delegated", "status_changed_by_id": "guid", "status_changed_by_name": "李四", "status_changed_at": "...", ... },
-  "feedback": { "id": "guid", "is_to_down": false, "type": "delegate", "from_user_id": "guid", "from_user_name": "李四", "to_user_id": "guid", "to_user_name": "张三", ... }
-}
-```
-
-> user_id 从 JWT 解析，校验 = assigned_to，upstream_state = in_process
-> downstream_state → delegated
-> 创建 feedback (type=delegate, is_to_down=false) — 通知 upstream 了解拆解进展
-
-### 6.5 block（标记阻塞）
-
-```json
-// Request
-{
-  "action": "block",
-  "content": "依赖的上游 API 未就绪，无法继续",   // 必填，阻塞原因
-  "attachments": []                                // 可选
-}
-
-// Response 200
-{
-  "brief": { "upstream_state": "in_process", "downstream_state": "blocked", "status_changed_by_id": "guid", "status_changed_by_name": "李四", "status_changed_at": "...", ... },
-  "feedback": { "id": "guid", "is_to_down": false, "type": "block", "from_user_id": "guid", "from_user_name": "李四", "to_user_id": "guid", "to_user_name": "张三", ... }
-}
-```
-
-> user_id 从 JWT 解析，校验 = assigned_to，upstream_state = in_process
-> downstream_state → blocked
-> 创建 feedback (type=block, is_to_down=false) — 通知 upstream 需介入
+> open 可从 submitted/delegated/blocked 发起；delegate/block 可从 opened/submitted 发起。downstream 自由切换。
+> process 是唯一不改变 downstream_state 的 action（纯进度更新）。
 
 ---
 
@@ -1043,6 +1006,7 @@ Response 200
 
 ```
 (editing, null) ──send──→ (sent, null)
+(sent, null) ──send──→ (sent, null)           // 替换邀约（version 更新）
                            ↓ accept                ↓ reject
                     (in_process, opened)       → (editing, null)
 
@@ -1050,36 +1014,41 @@ Response 200
                                        → (in_process, blocked)
                                        → (in_process, submitted)
 
-(in_process, submitted) ──approve──→ (done, null)
+(in_process, *) ──update──→ (in_process, opened)    // 更新版本，强制下游重开（记录在 feedbacks）
+(in_process, submitted) ──approve──→ (done, preserved)
 (in_process, submitted) ──reject_submit──→ (in_process, opened)
-(in_process, *) ──update──→ (in_process, opened)    // 强制下游重开
 (in_process, *) ──cancel──→ (cancelled, preserved)   // downstream_state 保留
 (in_process, *) ──suspend──→ (suspended, preserved)  // downstream_state 保留
 (suspended, preserved) ──resume──→ (in_process, preserved)  // 原样恢复
 ```
 
+> send 是邀约阶段桥梁（editing/sent → transfer_history），update 是合约期间桥梁（in_process → feedbacks）。两者对 version 操作相同（version→sent, current_version 更新）。
+
 ---
 
 ## 附录 B：动作与端点对照表
 
-| 端点分组 | URL | action | upstream_state 变更 | downstream_state 变更 | 创建的 feedback type |
-|---------|-----|--------|:-------------------:|:---------------------:|---------------------|
-| **Editing** | `POST /briefs/:id/editing` | patch | 不变 | 不变 | — |
-| | | review | 不变 | 不变 | — |
-| **Transfer** | `POST /briefs/:id/transfer` | send | → sent | 不变 | — (transfer_history) |
-| | | accept | → in_process | → opened | — (transfer_history) |
-| | | reject | → editing | → null | — (transfer_history) |
-| **Upstream-action** | `POST /briefs/:id/upstream-actions` | cancel | → cancelled | 保留 | cancel |
-| | | suspend | → suspended | 保留 | suspend |
-| | | resume | → in_process | 保留 | resume |
-| | | approve | → done | → null | approve |
-| | | reject_submit | 不变 | → opened | reject_submit |
-| | | update | 不变 | → opened | update |
-| **Downstream-action** | `POST /briefs/:id/downstream-actions` | process | 不变 | 不变 | progress |
-| | | submit | 不变 | → submitted | submit |
-| | | open | 不变 | → opened | open |
-| | | delegate | 不变 | → delegated | delegate |
-| | | block | 不变 | → blocked | block |
+| 端点分组 | URL | action | 操作对象 | upstream_state 变更 | downstream_state 变更 | 创建的 feedback type |
+|---------|-----|--------|---------|:-------------------:|:-------------------:|---------------------|
+| **Editing** | `POST /briefs/:id/editing` | patch | version only | 不变 |         不变          | — |
+| | | submit-review | version only | 不变 |         不变          | — |
+| **Transfer** | `POST /briefs/:id/transfer` | send（from editing） | version + brief | → sent |         不变          | — (transfer_history) |
+| | | send（from sent） | version + brief | 不变 |         不变          | — (transfer_history) |
+| | | accept | brief only | → in_process |      → opened       | — (transfer_history) |
+| | | reject | brief only | → editing |       → null        | — (transfer_history) |
+| **Upstream-action** | `POST /briefs/:id/upstream-actions` | cancel | brief only | → cancelled |         保留          | cancel |
+| | | suspend | brief only | → suspended |         保留          | suspend |
+| | | resume | brief only | → in_process |         保留          | resume |
+| | | approve | brief only | → done |         保留          | approve |
+| | | reject_submit | brief only | 不变 |      → opened       | reject_submit |
+| | | update | version + brief | 不变 |      → opened       | update |
+| **Downstream-action** | `POST /briefs/:id/downstream-actions` | process | brief only | 不变 |         不变          | progress |
+| | | submit | brief only | 不变 |     → submitted     | submit |
+| | | open | brief only | 不变 |      → opened       | open |
+| | | delegate | brief only | 不变 |     → delegated     | delegate |
+| | | block | brief only | 不变 |      → blocked      | block |
+
+> **version 与 state 解耦**：Editing 组只操作 version，Upstream/Downstream-action 组只操作 brief 状态（update 除外，同时操作 version + brief）。Transfer 组的 send 是邀约阶段桥梁，Upstream-action 的 update 是合约期间桥梁。
 
 ---
 

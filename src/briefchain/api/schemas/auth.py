@@ -40,9 +40,9 @@ class RegisterRequest(BaseModel):
         default=None,
         examples=["00000000-0000-0000-0000-000000000000"],
     )
-    brief_id: UUID | None = Field(
+    invite_token: str | None = Field(
         default=None,
-        examples=["00000000-0000-0000-0000-000000000000"],
+        examples=["brief-id:nonce:deadline:signature"],
     )
 
     @field_validator("email", "phone", mode="before")
@@ -72,9 +72,9 @@ class LoginRequest(BaseModel):
         default=None,
         examples=["00000000-0000-0000-0000-000000000000"],
     )
-    brief_id: UUID | None = Field(
+    invite_token: str | None = Field(
         default=None,
-        examples=["00000000-0000-0000-0000-000000000000"],
+        examples=["brief-id:nonce:deadline:signature"],
     )
 
     @field_validator("email", "phone", mode="before")

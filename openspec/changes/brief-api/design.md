@@ -5,7 +5,7 @@ User API (`/auth`、`/users`) 已经实现，SQLAlchemy 模型（`Brief`、`Brie
 ## Goals / Non-Goals
 
 **Goals:**
-- 基于 FastAPI 实现 `/api/v1/briefs` 路由：创建、列表、详情、editing 阶段操作（patch / review）。
+- 基于 FastAPI 实现 `/api/v1/briefs` 路由：创建、列表、详情（含 `draft_version`）、editing 阶段操作（patch / submit-review）。
 - 实现 `/api/v1/briefs/:brief_id/transfer?action=send|accept|reject`：邀约阶段流转，支持临时用户发送。
 - 实现 `/api/v1/briefs/:brief_id/upstream-actions?action=cancel|suspend|resume|approve|reject_submit|update`：上游合约期操作。
 - 实现 `/api/v1/briefs/:brief_id/downstream-actions?action=process|submit|open|delegate|block`：下游合约期操作。
@@ -49,18 +49,19 @@ User API (`/auth`、`/users`) 已经实现，SQLAlchemy 模型（`Brief`、`Brie
   - 其他已认证用户只读（列表/详情/版本/历史/反馈/chain）。
 - **版本管理**：
   - 创建 brief 时同步创建 `BriefVersion` v1，状态为 "draft"；`briefs.current_version` 初始为 null。
-  - `PATCH /briefs/:id/editing?action=patch`：未 sent 时直接修改当前 draft 版本；已 sent 后 reject 回 editing 则创建新 draft 版本但不改变 `current_version`。
-  - `POST /briefs/:id/editing?action=review`：当前 draft 版本 → "reviewed"。
-  - `POST /briefs/:id/transfer?action=send`：当前 reviewed 版本 → "sent"，并同步 `briefs.current_version` / `title` / `priority` / `expected_completion_at`。
-  - 详情接口通过 `?version=` 参数返回指定版本内容，默认返回 `current_version`。
+  - `PATCH /briefs/:id/editing?action=patch`：只操作 version.status。`draft`/`reviewed` 原地修改；`sent` 不能修改，自动创建 v(n+1) draft（若已存在则报错）。patch 不同步 `briefs.title` / `priority` / `expected_completion_at`。
+  - `POST /briefs/:id/editing?action=submit-review`：当前 draft 版本 → "reviewed"；不碰 brief state。
+  - `POST /briefs/:id/transfer?action=send`：当前 reviewed 版本 → "sent"，并同步 `briefs.current_version` / `title` / `priority` / `expected_completion_at`（邀约阶段桥梁）。
+  - `POST /briefs/:id/upstream-actions?action=update`：合约期桥梁，对 version 的操作与 send 相同，但记录在 feedbacks 并强制 `downstream_state=opened`。
+  - 详情接口通过 `?version=` 参数返回指定版本内容，默认返回 `current_version` 内容；同时返回 `draft_version` 字段标识可编辑 draft（null 表示无）。
 - **状态流转**：
-  - editing 阶段：patch（修改内容）、review（版本 draft → reviewed）。
-  - transfer 阶段：send（editing → sent）、accept（sent → in_process, opened）、reject（sent → editing）。
-  - upstream-actions：cancel（→ cancelled）、suspend（→ suspended）、resume（→ in_process）、approve（→ done, null）、reject_submit（downstream_state → opened）、update（新版本 sent，downstream_state → opened）。
-  - downstream-actions：process（progress feedback，无状态变化）、submit（→ submitted）、open（→ opened）、delegate（→ delegated）、block（→ blocked）。
+  - editing 阶段：patch（只改 version 内容/状态）、submit-review（版本 draft → reviewed，不改 brief state）。
+  - transfer 阶段：send（editing/sent → sent，version→sent，同步 current_version 等）、accept（sent → in_process, opened）、reject（sent → editing）。
+  - upstream-actions（除 update 外只改 brief state）：cancel（→ cancelled，保留 downstream_state）、suspend（→ suspended，保留 downstream_state）、resume（→ in_process）、approve（→ done，保留 downstream_state）、reject_submit（downstream_state → opened）、update（新版本 sent，downstream_state → opened）。
+  - downstream-actions（只改 brief state）：process（progress feedback，无状态变化）、submit（→ submitted）、open（→ opened）、delegate（→ delegated）、block（→ blocked）。
 - **响应模式**：
   - 列表模式：`brief_id`, `title`, `upstream_state`, `downstream_state`, `priority`, `created_by_id`, `created_by_name`, `assigned_to_id`, `assigned_to_name`, `status_changed_by_id`, `status_changed_by_name`, `status_changed_at`, `updated_at`。
-  - 详情模式：列表模式 + `root_id`, `parent_id`, `content`, `attachments`, `current_version`, `version`, `is_current`, `estimated_man_days`, `expected_completion_at`, `created_at`。
+  - 详情模式：列表模式 + `root_id`, `parent_id`, `content`, `attachments`, `current_version`, `version`, `is_current`, `draft_version`, `estimated_man_days`, `expected_completion_at`, `created_at`。
   - tree 模式：`brief_id`, `title`, `upstream_state`, `downstream_state`, `children`。
 - **错误处理**：复用统一的 `{ "error": { "code": "...", "message": "...", "details": {} } }` 格式。
 - **分页**：列表接口使用 cursor-based 分页（`page_cursor` + `page_size`）。MVP 阶段使用基于 `updated_at` + `brief_id` 的游标，降低实现复杂度。

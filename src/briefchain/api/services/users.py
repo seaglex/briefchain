@@ -11,7 +11,7 @@ from briefchain.api.exceptions import APIError
 from briefchain.api.schemas.auth import AuthResponse, LoginRequest, RegisterRequest, UserAuthBase
 from briefchain.api.schemas.users import UserListResponse, UserResponse, serialize_user
 from briefchain.api.security import create_access_token, get_password_hash, verify_password
-from briefchain.models import Brief, User
+from briefchain.models import Brief, BriefInvite, User
 from briefchain.models.enums import BriefUpstreamState, UserType
 
 _ACTIVE_BRIEF_UPSTREAM_STATES = {
@@ -64,39 +64,38 @@ def _find_existing_user(
     return session.execute(select(User).where(filter_clause)).scalars().first()
 
 
-def _require_temporary_brief(session: Session, brief_id: UUID | None) -> tuple[Brief, User]:
-    """Validate that brief_id points to a brief assigned to a temporary user.
+def _require_invite_for_temporary_user(
+    session: Session,
+    invite_token: str | None,
+    temporary_user_id: UUID | None,
+) -> BriefInvite:
+    """Validate an invite token and that it belongs to the expected temporary user.
 
     Returns:
-        Tuple of (brief, temporary_user).
+        The validated BriefInvite record.
 
     Raises:
-        APIError: If the brief does not exist or is not assigned to a temporary user.
+        APIError: If the token is missing, invalid, expired, invalidated, or the
+            temporary_user_id does not match.
     """
-    if brief_id is None:
+    from briefchain.api.services import invites as invite_service
+
+    if not invite_token or not temporary_user_id:
         raise APIError(
-            code="INVALID_BRIEF_ID",
-            message="Invalid brief_id",
+            code="INVALID_INVITE_TOKEN",
+            message="invite_token and temporary_user_id are required together",
             status_code=400,
         )
 
-    brief = session.get(Brief, brief_id)
-    if brief is None or brief.assigned_to is None:
+    invite = invite_service.get_invite_by_token(session, invite_token)
+    if invite.temporary_user_id != temporary_user_id:
         raise APIError(
-            code="INVALID_BRIEF_ID",
-            message="Invalid brief_id",
+            code="INVALID_INVITE_TOKEN",
+            message="temporary_user_id does not match the invite",
             status_code=400,
         )
 
-    temporary_user = session.get(User, brief.assigned_to)
-    if temporary_user is None or temporary_user.user_type != UserType.TEMPORARY:
-        raise APIError(
-            code="INVALID_BRIEF_ID",
-            message="Invalid brief_id",
-            status_code=400,
-        )
-
-    return brief, temporary_user
+    return invite
 
 
 def register_user(session: Session, request: RegisterRequest) -> AuthResponse:
@@ -114,9 +113,21 @@ def register_user(session: Session, request: RegisterRequest) -> AuthResponse:
         )
 
     existing = _find_existing_user(session, email, phone)
+    has_invite = request.invite_token is not None
     if existing is not None:
-        if request.brief_id is not None:
-            _, temporary_user = _require_temporary_brief(session, request.brief_id)
+        if has_invite:
+            invite = _require_invite_for_temporary_user(
+                session,
+                request.invite_token,
+                request.temporary_user_id,
+            )
+            temporary_user = session.get(User, invite.temporary_user_id)
+            if temporary_user is None:
+                raise APIError(
+                    code="INVALID_INVITE_TOKEN",
+                    message="Temporary user not found",
+                    status_code=400,
+                )
             if existing.id != temporary_user.id:
                 if email and existing.email == email:
                     raise APIError(
@@ -145,8 +156,19 @@ def register_user(session: Session, request: RegisterRequest) -> AuthResponse:
                 )
 
     upgraded_from_temporary = False
-    if request.brief_id is not None:
-        brief, temporary_user = _require_temporary_brief(session, request.brief_id)
+    if has_invite:
+        invite = _require_invite_for_temporary_user(
+            session,
+            request.invite_token,
+            request.temporary_user_id,
+        )
+        temporary_user = session.get(User, invite.temporary_user_id)
+        if temporary_user is None:
+            raise APIError(
+                code="INVALID_INVITE_TOKEN",
+                message="Temporary user not found",
+                status_code=400,
+            )
         user = temporary_user
         user.user_type = UserType.REGISTERED
         user.password_hash = get_password_hash(request.password)
@@ -221,8 +243,19 @@ def login_user(session: Session, request: LoginRequest) -> AuthResponse:
         )
 
     linked_temporary_user: UUID | None = None
-    if request.brief_id is not None:
-        brief, temporary_user = _require_temporary_brief(session, request.brief_id)
+    if request.invite_token is not None:
+        invite = _require_invite_for_temporary_user(
+            session,
+            request.invite_token,
+            request.temporary_user_id,
+        )
+        temporary_user = session.get(User, invite.temporary_user_id)
+        if temporary_user is None:
+            raise APIError(
+                code="INVALID_INVITE_TOKEN",
+                message="Temporary user not found",
+                status_code=400,
+            )
         _migrate_active_briefs(session, temporary_user.id, user.id)
         user.from_temporary_user_id = temporary_user.id
         linked_temporary_user = temporary_user.id

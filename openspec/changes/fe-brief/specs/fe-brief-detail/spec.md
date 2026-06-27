@@ -5,7 +5,7 @@ The system SHALL provide a Brief detail page at `/briefs/[brief_id]` that shows 
 
 #### Scenario: Detail page loads
 - **WHEN** an authenticated user navigates to `/briefs/[brief_id]`
-- **THEN** the page displays the brief title, upstream state badge, downstream state badge when present, priority badge, content, creator name, assignee name, and timestamps
+- **THEN** the page displays the brief title, upstream state badge, downstream state badge when present, priority badge, content, creator name, assignee name, timestamps, and a `draft_version` indicator when an editable draft exists
 
 ### Requirement: Detail page provides tabbed sections
 The system SHALL provide tabs on the detail page for content, attachments, transfers, and feedbacks.
@@ -25,6 +25,15 @@ The system SHALL display action buttons based on the current user's relationship
 - **WHEN** the current user is the brief creator and `upstream_state` is "editing"
 - **THEN** the page shows upstream actions such as edit and submit for review
 
+#### Scenario: Draft version indicator shown
+- **WHEN** the user views a brief where `draft_version` is not `null`
+- **THEN** the page displays a badge indicating "Draft v{N} available"
+- **AND** the creator sees an edit button to load the draft version content
+
+#### Scenario: Upstream can edit draft from sent or in_process state
+- **WHEN** the current user is the brief creator, `upstream_state` is "sent" or "in_process", and `draft_version` is not `null`
+- **THEN** the page shows an edit button that loads the draft version content
+
 #### Scenario: Downstream transfer view
 - **WHEN** the current user is the brief assignee and `upstream_state` is "sent"
 - **THEN** the page shows transfer actions to accept or reject the brief
@@ -39,7 +48,7 @@ The system SHALL display action buttons based on the current user's relationship
 
 #### Scenario: Downstream submitted view
 - **WHEN** the current user is the brief assignee, `upstream_state` is "in_process", and `downstream_state` is "submitted"
-- **THEN** the page shows a downstream action to withdraw/reopen the submission
+- **THEN** the page shows a downstream action to reopen the submission (open action)
 
 #### Scenario: Upstream submitted view
 - **WHEN** the current user is the brief creator, `upstream_state` is "in_process", and `downstream_state` is "submitted"

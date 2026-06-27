@@ -1,6 +1,6 @@
 # BriefChain 邀请链接设计
 
-> 版本：MVP v1.1
+> 版本：MVP v0.5
 > 最后更新：2026-06-23
 > 关联文档：03-api-design.md（第 2.6 节 send_brief 已同步更新）
 
@@ -226,6 +226,12 @@ is_temporary_user=true，收到 recipient_email/phone（可能都为空）
 
 ## 7. 邀请链接端点（公开，无需 JWT）
 
+临时用户通过独立的端点操作，路径明确区分鉴权方式：
+- 普通用户：`/briefs/:id/transfer` + JWT
+- 临时用户：`/invites/{token}/transfer` + Token
+
+两个端点的 Request/Response 格式完全相同，只是路径和鉴权方式不同。后端调用相同的 service 方法。
+
 ### 7.1 查看邀请
 
 `GET /invites/{token}`
@@ -260,164 +266,62 @@ is_temporary_user=true，收到 recipient_email/phone（可能都为空）
 }
 ```
 
-### 7.2 接受
+### 7.2 转移操作（接受/拒绝）
 
-`POST /invites/{token}/accept`
+`POST /invites/{token}/transfer?action={accept|reject}`
 
-- 不需要 JWT
-- 校验 token + accept_deadline 未过期 + brief 当前状态为 sent
-- 内部调用 `accept_brief(session, brief_id, temporary_user_id)` — 复用现有函数
+- 不需要 JWT，从 token 解析 `temporary_user_id`
+- 校验：HMAC 签名 + 未过期 + 未失效 + accept_deadline 未过期
+- Request/Response 与 `POST /briefs/:id/transfer?action={accept|reject}` 完全相同
 
 ```json
-// Request（可选，修正名字）
-{ "name": "李四" }
+// Request（accept）
+{ "content": "已理解，开始排期" }
 
-// Response 200
+// Response 200（accept）
 {
-  "brief": { "status": "accepted", ... },
-  "transfer": { "accepted_at": "..." },
-  "message": "已接受。注册账号可继续追踪此 Brief"
+  "brief": { "upstream_state": "in_process", "downstream_state": "opened", ... },
+  "transfer": { "accepted_at": "..." }
 }
 ```
 
-### 7.3 拒绝
+> controller 层：解析 token → 获取 temporary_user_id → 调用 `accept_brief(session, brief_id, temporary_user_id, content)`
 
-`POST /invites/{token}/reject`
+### 7.3 下游操作（进度更新/提交/重开/委派/阻塞）
 
-- 不需要 JWT
-- 校验同上（需在 accept_deadline 内）
-- 内部调用 `reject_brief(session, brief_id, temporary_user_id, reason)` — 复用现有函数
+`POST /invites/{token}/downstream-actions?action={process|submit|open|delegate|block}`
+
+- 不需要 JWT，从 token 解析 `temporary_user_id`
+- 校验：HMAC 签名 + 未过期 + 未失效 + complete_deadline 未过期
+- Request/Response 与 `POST /briefs/:id/downstream-actions?action={...}` 完全相同
 
 ```json
-// Request
-{ "reason": "验收标准不清晰" }
+// Request（block）
+{ "content": "依赖的上游 API 未就绪" }
 
-// Response 200
+// Response 200（block）
 {
-  "brief": { "status": "draft", ... },
-  "transfer": { "rejected_at": "...", "rejection_reason": "..." }
+  "brief": { "upstream_state": "in_process", "downstream_state": "blocked", ... },
+  "feedback": { "id": "guid", "type": "block", ... }
 }
 ```
 
-### 7.4 标记阻塞
+> controller 层：解析 token → 获取 temporary_user_id → 调用 `downstream_action(session, brief_id, temporary_user_id, action, content)`
 
-`POST /invites/{token}/block`
+### 7.4 两套 deadline 的校验分工
 
-- 不需要 JWT
-- 前提：brief 状态为 `accepted`，当前时间在 `complete_deadline` 内
-- 内部调用 `block_brief(session, brief_id, temporary_user_id, reason)` — 复用现有函数
+| deadline | 适用动作 | 说明 |
+|----------|----------|------|
+| `accept_deadline` | accept / reject | 接受/拒绝阶段，从 token 解析 |
+| `complete_deadline` | block / submit / process / open / delegate | 执行阶段，从 token 解析 |
 
-```json
-// Request
-{ "reason": "依赖的设计稿还未完成，无法推进" }
-
-// Response 200
-{
-  "brief": { "status": "blocked", ... },
-  "feedback": {
-    "id": "guid",
-    "type": "blocked",
-    "content": "依赖的设计稿还未完成，无法推进",
-    "from_user": { "id": "临时用户UUID", "name": "李四" },
-    "created_at": "..."
-  }
-}
-```
-
-> 阻塞解除（blocked → accepted）需要由发送方（已注册用户）在系统内操作，不提供邀请链接端点
-
-### 7.5 标记完成（含结果）
-
-`POST /invites/{token}/complete`
-
-- 不需要 JWT
-- 前提：brief 状态为 `accepted`，当前时间在 `complete_deadline` 内
-- 内部调用 `complete_brief(session, brief_id, temporary_user_id, result)` — 复用现有函数
-
-```json
-// Request
-{
-  "result": "已完成首页性能优化，首屏加载时间从 3.2s 降至 1.3s",
-  "attachments": [
-    { "name": "性能对比报告.png", "url": "/api/v1/files/...", "type": "image" }
-  ]
-}
-
-// Response 200
-{
-  "brief": { "status": "done", ... },
-  "feedback": {
-    "id": "guid",
-    "type": "completion",
-    "content": "已完成首页性能优化...",
-    "attachments": [...],
-    "from_user": { "id": "临时用户UUID", "name": "李四" },
-    "created_at": "..."
-  }
-}
-```
-
-> complete_deadline 过期后不能标记完成，需联系发送方延期
+> Token 校验（HMAC 签名 + 未过期 + 未失效）在 controller 层统一处理，各动作内部再检查 brief 当前状态和对应的 deadline。
 
 ---
 
-## 8. 鉴权层实现
-
-邀请端点不需要 JWT，使用 Token 参数验证：
-
-```python
-# dependencies.py 新增
-def get_invite_from_token(session: SessionDep, token: str) -> BriefInvite:
-    """验证邀请 token，返回 BriefInvite 记录。"""
-    # 1. HMAC 签名校验（不查 DB）
-    # 2. 检查 accept_deadline 未过期
-    # 3. DB 查 nonce → BriefInvite 记录
-    # 4. 检查 invalidated_at 为 null（未失效）
-
-InviteDep = Annotated[BriefInvite, Depends(get_invite_from_token)]
-```
-
-```python
-# routes/invites.py
-router = APIRouter(prefix="/invites", tags=["invites"])
-
-@router.get("/{token}")
-def view_invite(invite: InviteDep, session: SessionDep):
-    ...
-
-@router.post("/{token}/accept")
-def accept_invite(invite: InviteDep, session: SessionDep, body: AcceptInviteRequest | None = None):
-    # 校验使用 accept_deadline
-    user_id = invite.temporary_user_id
-    return accept_brief(session, invite.brief_id, user_id)  # 复用！
-
-@router.post("/{token}/reject")
-def reject_invite(invite: InviteDep, session: SessionDep, body: RejectInviteRequest):
-    # 校验使用 accept_deadline
-    user_id = invite.temporary_user_id
-    return reject_brief(session, invite.brief_id, user_id, body.reason)  # 复用！
-
-@router.post("/{token}/block")
-def block_invite(invite: InviteDep, session: SessionDep, body: BlockInviteRequest):
-    # 校验使用 complete_deadline（brief 已 accepted）
-    user_id = invite.temporary_user_id
-    return block_brief(session, invite.brief_id, user_id, body.reason)  # 复用！
-
-@router.post("/{token}/complete")
-def complete_invite(invite: InviteDep, session: SessionDep, body: CompleteInviteRequest):
-    # 校验使用 complete_deadline（brief 已 accepted）
-    user_id = invite.temporary_user_id
-    return complete_brief(session, invite.brief_id, user_id, body.result, body.attachments)  # 复用！
-```
-
-> **两套 deadline 的校验分工**：
-> - `accept_deadline`：适用于 accept / reject（接受/拒绝阶段）
-> - `complete_deadline`：适用于 block / complete（执行阶段，brief 处于 accepted）
-> - InviteDep 校验签名和失效状态；各端点内部再检查对应的 deadline 和 brief 当前状态
-
 ---
 
-## 9. 后端代码变更清单
+## 8. 后端代码变更清单
 
 | 文件 | 变更 |
 |------|------|
@@ -425,19 +329,20 @@ def complete_invite(invite: InviteDep, session: SessionDep, body: CompleteInvite
 | models/brief.py | 新增 invites 关系 |
 | models/user.py | user_type 新增 temporary；删除 EmailToken；新增 `from_temporary_user_id` 字段 |
 | models/enums.py | UserType 新增 TEMPORARY |
-| schemas/invites.py | 新增 InviteViewResponse / AcceptInviteRequest / RejectInviteRequest / BlockInviteRequest / CompleteInviteRequest |
+| schemas/invites.py | 新增 InviteViewResponse + InviteTransferRequest + InviteDownstreamRequest |
 | schemas/auth.py | RegisterRequest / LoginRequest 新增 `temporary_user_id`、`invite_token` 可选参数 |
 | services/invites.py | 新增 token 生成/校验 + invite 失效逻辑（回填 final_user_id） |
 | services/auth.py | 注册：原地升级，校验 invite_token 提取 brief_id；登录：用 brief_id 直接更新 assigned_to，填写 from_temporary_user_id |
-| routes/invites.py | 新增邀请链接路由（5 个端点：view / accept / reject / block / complete） |
+| **routes/invites.py** | **新增** `POST /invites/{token}/transfer` + `POST /invites/{token}/downstream-actions`（临时用户操作端点） |
 | routes/auth.py | 注册/登录端点增加 invite_token 处理 |
-| dependencies.py | 新增 InviteDep |
-| services/briefs.py | send_brief 支持外部用户（方式二） |
+| services/briefs.py | send_brief 支持外部用户（方式二）；accept_brief/downstream_action 支持 temporary_user_id |
 | alembic/ | 新增 migration：brief_invites 表 + users.from_temporary_user_id + EmailToken 表删除 |
+
+> **关键变化**：临时用户通过独立端点 `/invites/{token}/transfer` 和 `/invites/{token}/downstream-actions` 操作，路径明确区分鉴权方式。后端 controller 层解析 token 后调用相同的 service 方法。
 
 ---
 
-## 10. 未来扩展
+## 9. 未来扩展
 
 - **邀请链接验证码**：敏感 Brief 可选择要求接收人输入 6 位短码（通过邮箱/短信单独发送）才能操作
 - **邀请通知**：可选自动发送邮件/短信通知（目前用户自行分享 URL）

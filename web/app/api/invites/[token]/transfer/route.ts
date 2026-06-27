@@ -5,5 +5,7 @@ export async function POST(
   { params }: { params: Promise<{ token: string }> }
 ) {
   const { token } = await params;
-  return proxyWithoutToken(`/api/v1/invites/${token}/block`, request, "POST");
+  const { searchParams } = new URL(request.url);
+  const action = searchParams.get("action");
+  return proxyWithoutToken(`/api/v1/invites/${token}/transfer?action=${action}`, request, "POST");
 }

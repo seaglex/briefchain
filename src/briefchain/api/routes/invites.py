@@ -1,16 +1,15 @@
 """Invite routes for the BriefChain API (public, token-based)."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from briefchain.api.dependencies import InviteDep, SessionDep
-from briefchain.api.schemas.briefs import BriefDetail, BriefLifecycleResponse
+from briefchain.api.schemas.briefs import (
+    BriefLifecycleResponse,
+    DownstreamActionRequest,
+)
 from briefchain.api.schemas.invites import (
     AcceptInviteRequest,
-    BlockInviteRequest,
-    DelegateInviteRequest,
-    OpenInviteRequest,
     RejectInviteRequest,
-    SubmitInviteRequest,
 )
 from briefchain.api.services import briefs as brief_service
 from briefchain.api.services import invites as invite_service
@@ -44,32 +43,31 @@ def view_invite(
     }
 
 
-@router.post("/{token}/accept", response_model=BriefLifecycleResponse)
-def accept_invite(
+@router.post("/{token}/transfer", response_model=BriefLifecycleResponse)
+def transfer_invite_action(
     invite: InviteDep,
     session: SessionDep,
-    body: AcceptInviteRequest | None = None,
+    action: str = Query(pattern="^(accept|reject)$"),
+    body: AcceptInviteRequest | RejectInviteRequest | None = None,
 ) -> BriefLifecycleResponse:
-    """Accept a sent brief using an invite token."""
-    if body is not None and body.name:
-        invite.temporary_user.name = body.name
-        session.add(invite.temporary_user)
-        session.commit()
+    """Accept or reject a sent brief using an invite token."""
+    if action == "accept":
+        if body is not None and isinstance(body, AcceptInviteRequest) and body.name:
+            invite.temporary_user.name = body.name
+            session.add(invite.temporary_user)
+            session.commit()
+        return brief_service.accept_brief(
+            session,
+            invite.brief_id,
+            invite.temporary_user_id,
+        )
 
-    return brief_service.accept_brief(
-        session,
-        invite.brief_id,
-        invite.temporary_user_id,
-    )
-
-
-@router.post("/{token}/reject", response_model=BriefLifecycleResponse)
-def reject_invite(
-    invite: InviteDep,
-    session: SessionDep,
-    body: RejectInviteRequest,
-) -> BriefLifecycleResponse:
-    """Reject a sent brief using an invite token."""
+    if body is None or not isinstance(body, RejectInviteRequest):
+        raise brief_service.APIError(
+            code="INVALID_REQUEST",
+            message="Reject reason required",
+            status_code=422,
+        )
     return brief_service.reject_brief(
         session,
         invite.brief_id,
@@ -78,64 +76,30 @@ def reject_invite(
     )
 
 
-@router.post("/{token}/submit", response_model=BriefDetail)
-def submit_invite(
+@router.post("/{token}/downstream-actions", response_model=BriefLifecycleResponse)
+def downstream_invite_action(
     invite: InviteDep,
     session: SessionDep,
-    body: SubmitInviteRequest,
-) -> dict:
-    """Submit completion of an accepted brief using an invite token."""
-    return brief_service.downstream_submit(
+    action: str = Query(pattern="^(process|submit|open|delegate|block)$"),
+    body: DownstreamActionRequest | None = None,
+) -> BriefLifecycleResponse:
+    """Perform a downstream action on an in-process brief using an invite token."""
+    if body is None:
+        body = DownstreamActionRequest()
+
+    if action in {"submit", "open", "block"} and not body.content:
+        action_label = {"submit": "Submit", "open": "Open", "block": "Block"}[action]
+        raise brief_service.APIError(
+            code="INVALID_REQUEST",
+            message=f"{action_label} content required",
+            status_code=422,
+        )
+
+    return brief_service.downstream_action(
         session,
         invite.brief_id,
         invite.temporary_user_id,
+        action,
         body.content,
         body.attachments,
-    )
-
-
-@router.post("/{token}/block", response_model=BriefDetail)
-def block_invite(
-    invite: InviteDep,
-    session: SessionDep,
-    body: BlockInviteRequest,
-) -> dict:
-    """Mark an in-process brief as blocked using an invite token."""
-    return brief_service.downstream_block(
-        session,
-        invite.brief_id,
-        invite.temporary_user_id,
-        body.reason,
-        body.attachments,
-    )
-
-
-@router.post("/{token}/open", response_model=BriefDetail)
-def open_invite(
-    invite: InviteDep,
-    session: SessionDep,
-    body: OpenInviteRequest,
-) -> dict:
-    """Reopen a brief using an invite token."""
-    return brief_service.downstream_open(
-        session,
-        invite.brief_id,
-        invite.temporary_user_id,
-        body.reason,
-    )
-
-
-@router.post("/{token}/delegate", response_model=BriefDetail)
-def delegate_invite(
-    invite: InviteDep,
-    session: SessionDep,
-    body: DelegateInviteRequest | None = None,
-) -> dict:
-    """Mark a brief as delegated using an invite token."""
-    content = body.content if body is not None else None
-    return brief_service.downstream_delegate(
-        session,
-        invite.brief_id,
-        invite.temporary_user_id,
-        content,
     )

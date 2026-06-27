@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { apiFetch, isNonEmpty } from "@/lib/auth";
 import { sendBrief } from "@/lib/invites";
 import UserSelector from "@/components/UserSelector";
+import type { BriefDetail } from "@/components/BriefDetail";
 
 interface BriefActionsProps {
   briefId: string;
@@ -16,6 +17,8 @@ interface BriefActionsProps {
   estimatedManDays: number | null;
   expectedCompletionAt: string | null;
   currentVersionStatus: string | null;
+  draftVersion: number | null;
+  draftVersionDetail: BriefDetail | null;
   isCreator: boolean;
   isAssignee: boolean;
 }
@@ -30,6 +33,8 @@ export default function BriefActions({
   estimatedManDays,
   expectedCompletionAt,
   currentVersionStatus,
+  draftVersion,
+  draftVersionDetail,
   isCreator,
   isAssignee,
 }: BriefActionsProps) {
@@ -105,11 +110,18 @@ export default function BriefActions({
 
   const startEdit = (mode: "patch" | "update") => {
     setEditMode(mode);
-    setEditTitle(title);
-    setEditContent(content);
-    setEditPriority(priority);
-    setEditEstimated(estimatedManDays?.toString() || "");
-    setEditExpectedCompletion(expectedCompletionAt ? expectedCompletionAt.slice(0, 16) : "");
+    const source = mode === "patch" && draftVersionDetail ? draftVersionDetail : {
+      title,
+      content,
+      priority,
+      estimated_man_days: estimatedManDays,
+      expected_completion_at: expectedCompletionAt,
+    };
+    setEditTitle(source.title);
+    setEditContent(source.content);
+    setEditPriority(source.priority);
+    setEditEstimated(source.estimated_man_days?.toString() || "");
+    setEditExpectedCompletion(source.expected_completion_at ? source.expected_completion_at.slice(0, 16) : "");
     setEditReason("");
     setModal("edit");
   };
@@ -154,7 +166,7 @@ export default function BriefActions({
   };
 
   const handleReview = async () => {
-    await handleAction(`/api/briefs/${briefId}/editing?action=review`, { note: note.trim() || undefined });
+    await handleAction(`/api/briefs/${briefId}/editing?action=submit-review`, { note: note.trim() || undefined });
     setModal(null);
     setNote("");
   };
@@ -579,19 +591,20 @@ export default function BriefActions({
   return (
     <>
       <div className="flex gap-8 flex-wrap">
-        {isCreator && upstreamState === "editing" && currentVersionStatus === "draft" && (
-          <>
-            <button className="btn btn-sm" onClick={() => startEdit("patch")}>
-              编辑
-            </button>
-            <button
-              className="btn btn-sm btn-primary"
-              onClick={() => setModal("review")}
-              disabled={loading}
-            >
-              提交审查
-            </button>
-          </>
+        {isCreator && !["done", "cancelled"].includes(upstreamState) && (
+          <button className="btn btn-sm" onClick={() => startEdit("patch")}>
+            {draftVersion ? `编辑 Draft v${draftVersion}` : "编辑"}
+          </button>
+        )}
+
+        {isCreator && currentVersionStatus === "draft" && (
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={() => setModal("review")}
+            disabled={loading}
+          >
+            提交审查
+          </button>
         )}
 
         {isCreator && currentVersionStatus === "reviewed" && (
@@ -639,23 +652,16 @@ export default function BriefActions({
             >
               打回
             </button>
-            <button
-              className="btn btn-sm"
-              onClick={() => startEdit("update")}
-              disabled={loading}
-            >
-              更新版本
-            </button>
           </>
         )}
 
-        {isCreator && upstreamState === "in_process" && downstreamState !== "submitted" && (
+        {isCreator && upstreamState === "in_process" && (
           <button
             className="btn btn-sm"
             onClick={() => startEdit("update")}
             disabled={loading}
           >
-            更新版本
+            {draftVersion ? "继续更新" : "推送更新"}
           </button>
         )}
 
@@ -727,7 +733,7 @@ export default function BriefActions({
           </>
         )}
 
-        {isCreator && !["done", "cancelled"].includes(upstreamState) && (
+        {isCreator && ["sent", "in_process", "suspended"].includes(upstreamState) && (
           <button
             className="btn btn-sm btn-danger"
             onClick={() => setModal("cancel")}

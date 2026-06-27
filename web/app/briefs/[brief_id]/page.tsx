@@ -38,6 +38,12 @@ export default async function BriefDetailPage({
   const transfers = transfersResult.ok ? transfersResult.data : [];
   const feedbacks = feedbacksResult.ok ? feedbacksResult.data : [];
 
+  const draftVersionDetail = await (async () => {
+    if (!brief?.draft_version) return null;
+    const result = await serverFetch<BriefDetail>(`/api/v1/briefs/${brief_id}?version=${brief.draft_version}`);
+    return result.ok ? result.data : null;
+  })();
+
   if (!userResult.ok) {
     redirect("/login");
   }
@@ -92,6 +98,8 @@ export default async function BriefDetailPage({
                 estimatedManDays={brief.estimated_man_days}
                 expectedCompletionAt={brief.expected_completion_at}
                 currentVersionStatus={brief.current_version_status}
+                draftVersion={brief.draft_version}
+                draftVersionDetail={draftVersionDetail}
                 isCreator={isCreator}
                 isAssignee={isAssignee}
               />

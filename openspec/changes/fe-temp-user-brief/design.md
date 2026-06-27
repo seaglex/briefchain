@@ -45,9 +45,9 @@ This change is purely frontend: expose the temporary-user send flow to creators 
    - No automatic redirect; the error explains what happened.
 
 6. **Invite page actions align with the new brief lifecycle**
-   - Accept/reject belong to the transfer phase and use token-based invite endpoints.
-   - After accepting, the recipient can perform downstream actions (submit / block / open / delegate) through token-based invite endpoints that map to the new downstream-actions logic.
-   - Creator-only actions (edit, review, send, cancel, suspend, resume, approve, reject_submit, update) are hidden on the invite page.
+   - Accept/reject belong to the transfer phase and use `POST /invites/{token}/transfer?action=accept|reject`.
+   - After accepting, the recipient can perform downstream actions (submit / block / open / delegate) through `POST /invites/{token}/downstream-actions?action=...`.
+   - Creator-only actions (edit, submit-review, send, cancel, suspend, resume, approve, reject_submit, update) are hidden on the invite page.
 
 ## Risks / Trade-offs
 

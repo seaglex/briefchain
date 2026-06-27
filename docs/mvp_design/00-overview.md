@@ -1,6 +1,6 @@
 # BriefChain 设计文档（总入口）
 
-> 最后更新：2026-06-27（v3：双状态模型）
+> 最后更新：2026-06-28（v5：send/update 分离）
 
 ## 文档结构
 
@@ -8,9 +8,10 @@
 |---|---|
 | [01-brief-feedback-design.md](01-brief-feedback-design.md) | Brief / Feedback 子系统（核心业务流程、双状态模型、正式沟通） |
 | [02-user-design.md](02-user-design.md) | User 子系统（用户、团队、三方登录） |
-| [03-api-design.md](03-api-design.md) | REST API 设计（MVP 端点定义） |
+| [03-api-design.md](03-api-design.md) | Brief REST API 设计（MVP 端点定义） |
 | [05-invite-link-design.md](05-invite-link-design.md) | 邀请链接设计 |
 | [06-task-kanban-design.md](06-task-kanban-design.md) | Task / Kanban 子系统（数据模型、看板配置、泳道） |
+| [07-task-kanban-api-design.md](07-task-kanban-api-design.md) | Task / Kanban REST API 设计（端点定义） |
 
 ## 产品定位
 
@@ -91,20 +92,11 @@ Kanban & Task (Task / sub-tasks / bug)
 
 ### Feedback
 
+包含两类
+- Downstream 的项目进度更新、状态更新
+- Upstream 的状态更新（暂停、取消、审核）
+
 feedbacks 是合约期间的**正式合同通知**，不是聊天消息。每个 feedback type（除 progress 外）都跟一个状态变更绑定，双向（up→down / down→up）统一走一张表，用 `is_to_down` 区分方向。所有状态变更的原因和历史都在 feedbacks 表查，天然支持多次反复（每次 reject_submit、每次 suspend/resume 都是一条新记录）。闲聊用其他 IM，沟通完再总结成 feedback 发出。
-
-#### 通知模型
-
-| Downstream 状态变更 | 通知 Upstream? | 说明 |
-|:-------------------:|:--------------:|------|
-| → opened | ✅ | downstream 正式接单 / 重新打开 |
-| → blocked | ✅ | 需 upstream 介入 |
-| → submitted | ✅ | 请 upstream review |
-| → delegated | ✅ | downstream 委派（通知 upstream 了解拆解进展） |
-| → opened (从 submitted 撤回) | ✅ | downstream 主动撤回提交 |
-
-Upstream 看到 delegated 后，可通过 agent 获得整个 sub-tree 的进展估算（无需催 downstream）。
-Upstream 暂停 / 取消 / 验收 结果，也存在feedbacks中。 
 
 ### 双状态模型
 
@@ -140,30 +132,34 @@ Brief 状态由 `upstream_state` 和 `downstream_state` 共同表达，视角归
 
 ## 动作盘点（12 个动作）
 
+**核心原则：version 与 state 解耦。** patch / submit-review 只操作 version，accept / cancel / suspend 等只操作 brief 状态。send 是邀约阶段桥梁（editing/sent），update 是合约期间桥梁（in_process）。
+
 按 API 聚类分组：
 
-| 分组 | 动作 | 操作方 | 变更 |
-|------|------|--------|------|
-| **编辑** | PATCH | upstream | 修改版本内容（upstream_state=editing） |
-| | submit-review | upstream | 版本 draft→reviewed |
-| **Transfer（邀约）** | send | upstream | (editing, null) → (sent, null) |
-| | accept | downstream | (sent, null) → (in_process, opened) |
-| | reject | downstream | (sent, null) → (editing, null) |
-| **Upstream-action** | cancel | upstream | → (cancelled, preserved) |
-| | suspend | upstream | → (suspended, preserved) |
-| | resume | upstream | → (in_process, preserved) |
-| | approve | upstream | (in_process, submitted) → (done, null) |
-| | reject_submit | upstream | downstream_state → opened |
-| | update | upstream | downstream_state → opened + 版本+1 |
-| **Downstream-action** | process | downstream | 不变，创建 progress feedback |
-| | submit | downstream | downstream_state → submitted |
-| | open | downstream | downstream_state → opened |
-| | delegate | downstream | downstream_state → delegated |
-| | block | downstream | downstream_state → blocked |
+| 分组 | 动作 | 操作方 | 操作对象 | 变更                                                                   |
+|------|------|--------|---------|----------------------------------------------------------------------|
+| **编辑** | patch | upstream | version only | 修改版本内容（sent→新建 draft，非 sent→原地改）                                     |
+| | submit-review | upstream | version only | 版本 draft→reviewed                                                    |
+| **Transfer** | send | upstream | version + brief | 两种场景：首次发送 / 替换邀约（记录在 transfer_history）                               |
+| | accept | downstream | brief only | (sent, null) → (in_process, opened)                                  |
+| | reject | downstream | brief only | (sent, null) → (editing, null)                                       |
+| **Upstream-action** | cancel | upstream | brief only | → (cancelled, preserved)                                             |
+| | suspend | upstream | brief only | → (suspended, preserved)                                             |
+| | resume | upstream | brief only | → (in_process, preserved)                                            |
+| | approve | upstream | brief only | (in_process, submitted) → (done, preserved)                          |
+| | reject_submit | upstream | brief only | downstream_state → opened                                            |
+| | update | upstream | version + brief | downstream_state → opened + 版本+1（记录在 feedbacks），version需要是reviewed状态 |
+| **Downstream-action** | process | downstream | brief only | 不变，创建 progress feedback                                              |
+| | submit | downstream | brief only | downstream_state → submitted                                         |
+| | open | downstream | brief only | downstream_state → opened                                            |
+| | delegate | downstream | brief only | downstream_state → delegated                                         |
+| | block | downstream | brief only | downstream_state → blocked                                           |
 
 **核心规则：**
+- **version 与 state 解耦**：patch / submit-review 只操作 version，不碰 brief 状态；accept / cancel / suspend 等只操作 brief 状态，不碰 version。send 是邀约阶段桥梁，update 是合约期间桥梁
 - downstream 自由控制 downstream_state（在 in_process 范围内），不需要为每个动作起独立名字
-- upstream 的 update/reject_submit 强制 downstream_state → opened（合约执行机制）
+- send 从 sent 发起 = 替换邀约（downstream 还没 accept，代价更小）
+- update 从 in_process / suspended 发起 = 更新合约（新版本 sent + 强制 downstream_state → opened，记录在 feedbacks 而非 transfer_history）
 - suspend 只改 upstream_state，downstream_state 保留不动；resume 原样恢复
 - cancel 保留 downstream_state 用于历史审计
 
@@ -172,10 +168,11 @@ Brief 状态由 `upstream_state` 和 `downstream_state` 共同表达，视角归
 - [x] 产品定位与原则
 - [x] 核心概念定义
 - [x] 状态机设计 — 双状态模型（upstream_state 6 + downstream_state 4/null）
-- [x] 动作盘点（12 动作，按编辑/Transfer/Upstream-action/Downstream-action 分组）
+- [x] version 与 state 解耦 — send/update 是两座桥梁，patch/submit-review 只操作 version
+- [x] 动作盘点（12 动作，send/update 分离，按编辑/Transfer/Upstream-action/Downstream-action 分组）
 - [x] Brief / Feedback 子系统数据库设计（feedbacks 11 type，content 规则）
 - [x] User 子系统数据库设计
-- [x] REST API 设计（v0.6）
+- [x] REST API 设计（v1.0）
 - [x] 邀请链接设计
 - [x] Task 数据模型设计
 - [x] Kanban & Task 子系统设计

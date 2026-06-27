@@ -57,14 +57,14 @@ class SubmitInviteRequest(BaseModel):
 class BlockInviteRequest(BaseModel):
     """Body for marking a brief as blocked via an invite."""
 
-    reason: str = Field(..., min_length=1)
+    content: str = Field(..., min_length=1)
     attachments: list[dict] | None = None
 
 
 class OpenInviteRequest(BaseModel):
     """Body for reopening a brief via an invite."""
 
-    reason: str = Field(..., min_length=1)
+    content: str = Field(..., min_length=1)
 
 
 class DelegateInviteRequest(BaseModel):

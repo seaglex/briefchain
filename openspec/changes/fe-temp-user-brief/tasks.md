@@ -1,7 +1,7 @@
 ## 1. API Client and Types
 
 - [x] 1.1 Add TypeScript types for temporary-user send request (`is_temporary_user`, `recipient_name`, `recipient_email`, `recipient_phone`) and invite response (`invite.invite_url`, `accept_deadline`, `complete_deadline`).
-- [x] 1.2 Add `apiFetch` helper calls for `GET /invites/{token}`, `POST /invites/{token}/accept`, `POST /invites/{token}/reject`, `POST /invites/{token}/block`, `POST /invites/{token}/submit`, `POST /invites/{token}/open`, and `POST /invites/{token}/delegate`.
+- [x] 1.2 Add `apiFetch` helper calls for `GET /invites/{token}`, `POST /invites/{token}/transfer?action=accept`, `POST /invites/{token}/transfer?action=reject`, `POST /invites/{token}/downstream-actions?action=block`, `POST /invites/{token}/downstream-actions?action=submit`, `POST /invites/{token}/downstream-actions?action=open`, and `POST /invites/{token}/downstream-actions?action=delegate`.
 
 ## 2. Brief Detail Send Dialog
 

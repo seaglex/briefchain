@@ -22,15 +22,15 @@
 ## 4. 详情页基础结构
 
 - [x] 4.1 创建 `web/app/briefs/[brief_id]/page.tsx`，Server Component 获取 Brief 详情与当前用户。
-- [x] 4.2 实现详情头部：标题、upstream_state badge、downstream_state badge、优先级 badge、创建者/执行者信息。
+- [x] 4.2 实现详情头部：标题、upstream_state badge、downstream_state badge、优先级 badge、创建者/执行者信息、以及 `draft_version` 可编辑 draft 徽标。
 - [x] 4.3 实现内容/流转/Feedback 标签页切换。
 - [x] 4.4 实现流转历史时间线展示（含 `from_user_name` / `to_user_name`）。
 - [x] 4.5 实现 Feedback 列表展示（含 `is_to_down`、type、from/to 用户名字）。
 
 ## 5. Editing 阶段操作
 
-- [x] 5.1 实现 patch 编辑功能：`upstream_state=editing` 时显示编辑表单，调用 `POST /api/briefs/[id]/editing?action=patch`。
-- [x] 5.2 实现 review 功能：`upstream_state=editing` 且当前版本 status=draft 时显示“提交审查”，调用 `POST /api/briefs/[id]/editing?action=review`。
+- [x] 5.1 实现 patch 编辑功能：`upstream_state` 不是 `done`/`cancelled` 时显示编辑表单；对 `sent` 版本 patch 自动创建新 draft，调用 `POST /api/briefs/[id]/editing?action=patch`。
+- [x] 5.2 实现 submit-review 功能：当前版本 status=draft 时显示“提交审查”，调用 `POST /api/briefs/[id]/editing?action=submit-review`。
 
 ## 6. Transfer 阶段操作
 
@@ -44,7 +44,7 @@
 - [x] 7.2 实现 suspend/resume：`upstream_state=sent/in_process` 可 suspend，`upstream_state=suspended` 可 resume，调用对应 `upstream-actions` 端点。
 - [x] 7.3 实现 approve：`upstream_state=in_process` + `downstream_state=submitted` 时显示，调用 `POST /api/briefs/[id]/upstream-actions?action=approve`。
 - [x] 7.4 实现 reject_submit：`downstream_state=submitted` 时显示，调用 `POST /api/briefs/[id]/upstream-actions?action=reject_submit`。
-- [x] 7.5 实现 update：`upstream_state=in_process` 时显示，调用 `POST /api/briefs/[id]/upstream-actions?action=update`。
+- [x] 7.5 实现 update：`upstream_state=in_process` 时显示；`draft_version` 为 null 时显示“推送更新”，不为 null 时显示“继续编辑更新”，调用 `POST /api/briefs/[id]/upstream-actions?action=update`。
 
 ## 8. Downstream-actions 操作
 
@@ -71,7 +71,7 @@
 
 - [x] 11.1 启动前后端，验证创建 Brief 成功后跳转详情页，初始 `upstream_state=editing`。
 - [x] 11.2 验证列表页按角色（created/assigned）与 upstream/downstream 状态筛选。
-- [x] 11.3 验证需求方可以 patch 编辑 editing Brief 并 review/send。
+- [x] 11.3 验证需求方可以 patch 编辑非终态 Brief 并 submit-review/send。
 - [x] 11.4 验证执行方可以接受/拒绝 sent Brief。
 - [x] 11.5 验证执行方可以 submit/open/delegate/block，需求方可以 approve/reject_submit/update。
 - [x] 11.6 验证登录后自动进入“分配给我的”列表，点击 Logo 回到该列表。

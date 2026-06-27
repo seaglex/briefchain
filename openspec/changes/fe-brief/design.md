@@ -37,7 +37,7 @@
 - **做法**：在 `web/lib/auth.ts` 新增 `getSessionToken()`（读取 httpOnly Cookie），列表页通过该 token 调用 `GET /api/v1/briefs?role=...&upstream_state=...&downstream_state=...`。
 
 ### 4. 详情页为 Server Component，交互操作为 Client Component
-- **理由**：详情内容（title、content、attachments、versions、transfers、feedbacks）适合服务端渲染；而 patch、review、send、accept、reject、approve、submit、block 等需要表单状态与事件处理，必须使用 Client Component。
+- **理由**：详情内容（title、content、attachments、versions、transfers、feedbacks、draft_version）适合服务端渲染；而 patch、submit-review、send、accept、reject、approve、submit、block 等需要表单状态与事件处理，必须使用 Client Component。
 - **做法**：`page.tsx` 为 Server Component，负责获取 brief 详情与当前用户；将操作按钮抽取到 `BriefActions` Client Component，通过 props 传入 brief 的 `upstream_state`、`downstream_state`、当前用户角色等信息。
 
 ### 5. 写操作通过内部 API Route 代理
@@ -45,7 +45,7 @@
 - **做法**：创建以下 API Route（统一使用与后端一致的 `action` 查询参数）：
   - `POST /api/briefs` → 后端 `POST /api/v1/briefs`
   - `POST /api/briefs/[id]/editing?action=patch` → 后端 `POST /api/v1/briefs/:id/editing?action=patch`
-  - `POST /api/briefs/[id]/editing?action=review` → 后端 `POST /api/v1/briefs/:id/editing?action=review`
+  - `POST /api/briefs/[id]/editing?action=submit-review` → 后端 `POST /api/v1/briefs/:id/editing?action=submit-review`
   - `POST /api/briefs/[id]/transfer?action=send` → 后端 `POST /api/v1/briefs/:id/transfer?action=send`
   - `POST /api/briefs/[id]/transfer?action=accept` → 后端 `POST /api/v1/briefs/:id/transfer?action=accept`
   - `POST /api/briefs/[id]/transfer?action=reject` → 后端 `POST /api/v1/briefs/:id/transfer?action=reject`
@@ -95,7 +95,7 @@
 5. 创建 `web/app/api/briefs/...` 新分组写操作代理路由，移除旧 `submit/send/accept/reject/complete/feedbacks` 代理。
 6. 更新 `web/app/page.tsx`，登录后重定向到 `/briefs?role=assigned`。
 7. 更新 `web/middleware.ts`（如有必要）与 sidebar 导航链接。
-8. 启动前后端，创建测试 Brief，验证创建、列表、详情、patch/review、send、accept/reject、upstream/downstream actions 流程。
+8. 启动前后端，创建测试 Brief，验证创建、列表、详情、patch/submit-review、send、accept/reject、upstream/downstream actions 流程。
 
 ## Open Questions
 

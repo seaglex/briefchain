@@ -17,7 +17,7 @@
 
 ## 3. Schemas
 
-- [x] 3.1 Add optional `brief_id: UUID | None` field to `RegisterRequest` and `LoginRequest` in `src/briefchain/api/schemas/auth.py`
+- [x] 3.1 Add optional `temporary_user_id: UUID | None` and `invite_token: str | None` fields to `RegisterRequest` and `LoginRequest` in `src/briefchain/api/schemas/auth.py`
 - [x] 3.2 Add `upgraded_from_temporary: bool = False` and `linked_temporary_user: UUID | None = None` fields to `AuthResponse`
 - [x] 3.3 Create `src/briefchain/api/schemas/invites.py` with `InviteViewResponse`, `AcceptInviteRequest`, `RejectInviteRequest`, `BlockedInviteRequest`, `DoneInviteRequest`, and `InviteMetadataResponse`
 - [x] 3.4 Update `SendBriefRequest` to add `is_temporary_user: bool` and make `recipient_email`/`recipient_phone` optional; update route/service to use the new parameter
@@ -42,9 +42,9 @@
 
 ## 6. Auth Service Changes
 
-- [x] 6.1 Update `register_user` to migrate all briefs assigned to the temporary user whose status is not `done` / `cancelled` to the registered user
+- [x] 6.1 Update `register_user` to migrate all briefs assigned to the temporary user whose `upstream_state` is not `done` / `cancelled` to the registered user
 - [x] 6.2 Update `login_user` to reject `UserType.TEMPORARY` users with `TEMPORARY_USER_CANNOT_LOGIN`
-- [x] 6.3 Update `login_user` to migrate all briefs assigned to the temporary user whose status is not `done` / `cancelled` to the logged-in user
+- [x] 6.3 Update `login_user` to migrate all briefs assigned to the temporary user whose `upstream_state` is not `done` / `cancelled` to the logged-in user
 
 ## 7. Dependencies
 
@@ -53,14 +53,14 @@
 
 ## 8. Routes
 
-- [x] 8.1 Create `src/briefchain/api/routes/invites.py` with `GET /invites/{token}`, `POST /invites/{token}/accept`, `POST /invites/{token}/reject`, `POST /invites/{token}/blocked`, and `POST /invites/{token}/done`
-- [x] 8.2 Update `src/briefchain/api/routes/auth.py` to pass `brief_id` through to service functions
+- [x] 8.1 Create `src/briefchain/api/routes/invites.py` with `GET /invites/{token}`, `POST /invites/{token}/transfer?action=accept|reject`, and `POST /invites/{token}/downstream-actions?action=process|submit|open|delegate|block`
+- [x] 8.2 Update `src/briefchain/api/routes/auth.py` to pass `temporary_user_id` and `invite_token` through to service functions
 - [x] 8.3 Update `src/briefchain/api/routes/briefs.py` `send_brief` endpoint to accept the new external-recipient request schema
 - [x] 8.4 Register the invites router in `src/briefchain/api/main.py` at `/api/v1`
 
 ## 9. Tests
 
 - [x] 9.1 Add/update API tests for `is_temporary_user` send branches: anonymous, reuse existing temporary user, fallback to registered user, fallback to final_user_id
-- [x] 9.2 Add/update API tests for auth with `brief_id` migrating all non-done/cancelled briefs
+- [x] 9.2 Add/update API tests for auth with `invite_token` migrating all non-done/cancelled briefs
 - [x] 9.3 Run `pytest tests/` and ensure all tests pass
 - [x] 9.4 Run `ruff check src tests`

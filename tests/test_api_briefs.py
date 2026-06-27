@@ -72,7 +72,7 @@ def test_review_brief(
 ) -> None:
     """Creator can submit a draft version for review."""
     response = client.post(
-        f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=review",
+        f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=submit-review",
         headers=auth_headers_creator,
     )
 
@@ -95,7 +95,7 @@ def test_send_brief(
 ) -> None:
     """Creator can send a reviewed brief to downstream."""
     client.post(
-        f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=review",
+        f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=submit-review",
         headers=auth_headers_creator,
     )
     response = client.post(
@@ -120,7 +120,7 @@ def test_accept_brief(
 ) -> None:
     """Downstream can accept a sent brief."""
     client.post(
-        f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=review",
+        f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=submit-review",
         headers=auth_headers_creator,
     )
     client.post(

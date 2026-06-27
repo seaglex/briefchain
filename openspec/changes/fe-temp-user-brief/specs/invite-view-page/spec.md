@@ -18,7 +18,7 @@ The invite page SHALL display the Brief details using the same component as the 
 - **AND** the Brief detail matches the data returned by `GET /invites/{token}`
 
 ### Requirement: Public invite page hides creator-only actions
-The Brief detail component on the invite page SHALL hide actions that are only relevant to the creator, such as edit, review, send, cancel, suspend, resume, approve, reject_submit, and update.
+The Brief detail component on the invite page SHALL hide actions that are only relevant to the creator, such as edit, submit-review, send, cancel, suspend, resume, approve, reject_submit, and update.
 
 #### Scenario: Creator actions are hidden
 - **WHEN** the Brief detail is rendered in invite view mode
@@ -30,22 +30,34 @@ The system SHALL allow the recipient to accept or reject the brief while `upstre
 
 #### Scenario: Accept invite
 - **WHEN** the recipient clicks "接受"
-- **THEN** the system calls the token-based accept endpoint, refreshes the brief, and shows `upstream_state` as "in_process" and `downstream_state` as "opened"
+- **THEN** the system calls `POST /invites/{token}/transfer?action=accept`, refreshes the brief, and shows `upstream_state` as "in_process" and `downstream_state` as "opened"
 
 #### Scenario: Reject invite
 - **WHEN** the recipient clicks "拒绝" and enters a reason
-- **THEN** the system calls the token-based reject endpoint, refreshes the brief, and shows `upstream_state` as "editing"
+- **THEN** the system calls `POST /invites/{token}/transfer?action=reject`, refreshes the brief, and shows `upstream_state` as "editing" and `downstream_state` as null
 
 ### Requirement: Public invite page supports downstream actions
 The system SHALL allow the recipient to perform downstream actions after accepting the brief.
 
 #### Scenario: Submit completion
 - **WHEN** the recipient clicks "提交完成" and enters completion notes
-- **THEN** the system calls the token-based submit endpoint, refreshes the brief, and shows `downstream_state` as "submitted"
+- **THEN** the system calls `POST /invites/{token}/downstream-actions?action=submit`, refreshes the brief, and shows `downstream_state` as "submitted"
 
 #### Scenario: Block brief
 - **WHEN** the recipient clicks "标记阻塞" and enters a blocker reason
-- **THEN** the system calls the token-based block endpoint, refreshes the brief, and shows `downstream_state` as "blocked"
+- **THEN** the system calls `POST /invites/{token}/downstream-actions?action=block`, refreshes the brief, and shows `downstream_state` as "blocked"
+
+#### Scenario: Reopen brief
+- **WHEN** the recipient clicks "重开" and enters a reopen reason
+- **THEN** the system calls `POST /invites/{token}/downstream-actions?action=open`, refreshes the brief, and shows `downstream_state` as "opened"
+
+#### Scenario: Delegate brief
+- **WHEN** the recipient clicks "委派"
+- **THEN** the system calls `POST /invites/{token}/downstream-actions?action=delegate`, refreshes the brief, and shows `downstream_state` as "delegated"
+
+#### Scenario: Progress feedback
+- **WHEN** the recipient clicks "进度更新" and enters optional content
+- **THEN** the system calls `POST /invites/{token}/downstream-actions?action=process` and shows the new progress feedback in the feedback list
 
 ### Requirement: Invalid or expired invites show an error
 The invite page SHALL display a clear error when the token is invalid, expired, or invalidated.

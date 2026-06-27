@@ -331,11 +331,11 @@ def test_accept_invite(
     client: TestClient,
     invite_response: dict,
 ) -> None:
-    """POST /invites/{token}/accept accepts the brief."""
+    """POST /invites/{token}/transfer?action=accept accepts the brief."""
     invite_url = invite_response["invite"]["invite_url"]
     token = invite_url.split("/invites/")[1]
 
-    response = client.post(f"/api/v1/invites/{token}/accept")
+    response = client.post(f"/api/v1/invites/{token}/transfer?action=accept")
 
     assert response.status_code == 200
     data = response.json()
@@ -347,12 +347,12 @@ def test_reject_invite(
     client: TestClient,
     invite_response: dict,
 ) -> None:
-    """POST /invites/{token}/reject rejects the brief."""
+    """POST /invites/{token}/transfer?action=reject rejects the brief."""
     invite_url = invite_response["invite"]["invite_url"]
     token = invite_url.split("/invites/")[1]
 
     response = client.post(
-        f"/api/v1/invites/{token}/reject",
+        f"/api/v1/invites/{token}/transfer?action=reject",
         json={"reason": "Unclear requirements"},
     )
 
@@ -369,18 +369,22 @@ def test_reject_invite_requires_reason(
     invite_url = invite_response["invite"]["invite_url"]
     token = invite_url.split("/invites/")[1]
 
-    response = client.post(f"/api/v1/invites/{token}/reject", json={})
+    response = client.post(f"/api/v1/invites/{token}/transfer?action=reject", json={})
 
     assert response.status_code == 422
 
 
-def test_register_with_brief_id_upgrades_temporary_user(
+def test_register_with_invite_token_upgrades_temporary_user(
     client: TestClient,
     invite_response: dict,
     db_session: Session,
 ) -> None:
-    """Registering with brief_id upgrades the temporary user in place."""
+    """Registering with invite_token upgrades the temporary user in place."""
     brief_id = invite_response["brief"]["brief_id"]
+    brief = db_session.get(Brief, UUID(brief_id))
+    temporary_user_id = str(brief.assigned_to)
+    invite_url = invite_response["invite"]["invite_url"]
+    token = invite_url.split("/invites/")[1]
 
     response = client.post(
         "/api/v1/auth/register",
@@ -388,7 +392,8 @@ def test_register_with_brief_id_upgrades_temporary_user(
             "email": "external@example.com",
             "password": "password123",
             "name": "Registered External",
-            "brief_id": brief_id,
+            "temporary_user_id": temporary_user_id,
+            "invite_token": token,
         },
     )
 
@@ -408,9 +413,9 @@ def test_register_migrates_all_active_briefs(
     reviewed_brief_for_invite: Brief,
     db_session: Session,
 ) -> None:
-    """Registering with brief_id migrates all active briefs of the temporary user."""
+    """Registering with invite_token migrates all active briefs of the temporary user."""
     # Send first brief
-    client.post(
+    first_response = client.post(
         f"/api/v1/briefs/{reviewed_brief_for_invite.brief_id}/transfer?action=send",
         headers=auth_headers_creator,
         json={
@@ -419,6 +424,11 @@ def test_register_migrates_all_active_briefs(
             "recipient_name": "Multi Brief User",
         },
     )
+    first_data = first_response.json()
+    first_brief = db_session.get(Brief, reviewed_brief_for_invite.brief_id)
+    temporary_user_id = str(first_brief.assigned_to)
+    invite_url = first_data["invite"]["invite_url"]
+    token = invite_url.split("/invites/")[1]
 
     # Create and send second brief to the same temporary user
     brief2 = Brief(
@@ -475,14 +485,15 @@ def test_register_migrates_all_active_briefs(
         },
     )
 
-    # Register with first brief_id
+    # Register with invite_token
     response = client.post(
         "/api/v1/auth/register",
         json={
             "email": "multi@example.com",
             "password": "password123",
             "name": "Registered Multi",
-            "brief_id": str(reviewed_brief_for_invite.brief_id),
+            "temporary_user_id": temporary_user_id,
+            "invite_token": token,
         },
     )
 
@@ -495,13 +506,17 @@ def test_register_migrates_all_active_briefs(
     assert brief2_loaded.assigned_to == UUID(registered_id)
 
 
-def test_login_with_brief_id_links_brief(
+def test_login_with_invite_token_links_brief(
     client: TestClient,
     invite_response: dict,
     db_session: Session,
 ) -> None:
-    """Logging in with brief_id migrates brief ownership to the registered user."""
+    """Logging in with invite_token migrates brief ownership to the registered user."""
     brief_id = invite_response["brief"]["brief_id"]
+    brief = db_session.get(Brief, UUID(brief_id))
+    temporary_user_id = str(brief.assigned_to)
+    invite_url = invite_response["invite"]["invite_url"]
+    token = invite_url.split("/invites/")[1]
 
     # Create a registered user with a different email
     registered_user = User(
@@ -519,7 +534,8 @@ def test_login_with_brief_id_links_brief(
         json={
             "email": "registered@example.com",
             "password": "password123",
-            "brief_id": brief_id,
+            "temporary_user_id": temporary_user_id,
+            "invite_token": token,
         },
     )
 
@@ -552,9 +568,12 @@ def test_temporary_user_cannot_login_with_password(
 def test_invite_invalidated_after_register(
     client: TestClient,
     invite_response: dict,
+    db_session: Session,
 ) -> None:
     """Invite token is invalidated after temporary user registers."""
     brief_id = invite_response["brief"]["brief_id"]
+    brief = db_session.get(Brief, UUID(brief_id))
+    temporary_user_id = str(brief.assigned_to)
     invite_url = invite_response["invite"]["invite_url"]
     token = invite_url.split("/invites/")[1]
 
@@ -564,7 +583,8 @@ def test_invite_invalidated_after_register(
             "email": "external@example.com",
             "password": "password123",
             "name": "Registered External",
-            "brief_id": brief_id,
+            "temporary_user_id": temporary_user_id,
+            "invite_token": token,
         },
     )
 
@@ -577,39 +597,41 @@ def test_block_invite(
     client: TestClient,
     invite_response: dict,
 ) -> None:
-    """POST /invites/{token}/block marks brief downstream_state as blocked."""
+    """POST /invites/{token}/downstream-actions?action=block marks brief
+    downstream_state as blocked."""
     invite_url = invite_response["invite"]["invite_url"]
     token = invite_url.split("/invites/")[1]
 
     # First accept the brief
-    client.post(f"/api/v1/invites/{token}/accept")
+    client.post(f"/api/v1/invites/{token}/transfer?action=accept")
 
     response = client.post(
-        f"/api/v1/invites/{token}/block",
-        json={"reason": "Need clarification"},
+        f"/api/v1/invites/{token}/downstream-actions?action=block",
+        json={"content": "Need clarification"},
     )
 
     assert response.status_code == 200
     data = response.json()
-    assert data["downstream_state"] == "blocked"
+    assert data["brief"]["downstream_state"] == "blocked"
 
 
 def test_submit_invite(
     client: TestClient,
     invite_response: dict,
 ) -> None:
-    """POST /invites/{token}/submit marks brief downstream_state as submitted."""
+    """POST /invites/{token}/downstream-actions?action=submit marks brief
+    downstream_state as submitted."""
     invite_url = invite_response["invite"]["invite_url"]
     token = invite_url.split("/invites/")[1]
 
     # First accept the brief
-    client.post(f"/api/v1/invites/{token}/accept")
+    client.post(f"/api/v1/invites/{token}/transfer?action=accept")
 
     response = client.post(
-        f"/api/v1/invites/{token}/submit",
+        f"/api/v1/invites/{token}/downstream-actions?action=submit",
         json={"content": "Completed all tasks"},
     )
 
     assert response.status_code == 200
     data = response.json()
-    assert data["downstream_state"] == "submitted"
+    assert data["brief"]["downstream_state"] == "submitted"

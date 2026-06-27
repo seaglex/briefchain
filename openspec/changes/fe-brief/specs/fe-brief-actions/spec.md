@@ -1,22 +1,26 @@
 ## ADDED Requirements
 
-### Requirement: Upstream can patch a brief in editing state
-The system SHALL allow the brief creator to patch a brief when `upstream_state` is "editing".
+### Requirement: Upstream can patch a brief while it is not terminal
+The system SHALL allow the brief creator to patch a brief when `upstream_state` is not `done` or `cancelled`.
 
 #### Scenario: Successful patch
 - **WHEN** the creator modifies title, content, priority, expected completion time, or estimated man days and saves
 - **THEN** the system calls `POST /api/v1/briefs/[brief_id]/editing?action=patch`, refreshes the detail page, and shows the updated content
 
-#### Scenario: Patch disabled for non-editing state
-- **WHEN** the creator views a brief whose `upstream_state` is not "editing"
+#### Scenario: Patch disabled for terminal upstream state
+- **WHEN** the creator views a brief whose `upstream_state` is `done` or `cancelled`
 - **THEN** the patch/edit button is disabled or hidden
 
+#### Scenario: Patch on sent version creates new draft
+- **WHEN** the creator views a brief whose current version status is `sent` and clicks edit
+- **THEN** the system calls `POST /api/v1/briefs/[brief_id]/editing?action=patch` and, on success, the detail page reloads with a new `draft_version`
+
 ### Requirement: Upstream can submit the current draft version for review
-The system SHALL allow the brief creator to submit the current draft version for review.
+The system SHALL allow the brief creator to submit the current draft version for review via `action=submit-review`.
 
 #### Scenario: Successful review submission
 - **WHEN** the creator clicks "提交审查"
-- **THEN** the system calls `POST /api/v1/briefs/[brief_id]/editing?action=review`, refreshes the page, and shows the current version status as "reviewed"
+- **THEN** the system calls `POST /api/v1/briefs/[brief_id]/editing?action=submit-review`, refreshes the page, and shows the current version status as "reviewed"
 
 #### Scenario: Review disabled when current version is not draft
 - **WHEN** the creator views a brief whose current version status is not "draft"
@@ -85,11 +89,16 @@ The system SHALL allow the brief creator to reject a submitted brief and force d
 - **THEN** the system calls `POST /api/v1/briefs/[brief_id]/upstream-actions?action=reject_submit` with the reason, refreshes the page, and shows `downstream_state` as "opened"
 
 ### Requirement: Upstream can push an updated brief version
-The system SHALL allow the brief creator to push a new version of an in-process brief.
+The system SHALL allow the brief creator to push a new version of an in-process brief. When `draft_version` is `null` the creator initiates a new update; when `draft_version` is not `null` the creator continues editing the existing draft.
 
-#### Scenario: Successful update
-- **WHEN** the creator clicks "推送更新", enters new version fields, and provides a change note
-- **THEN** the system calls `POST /api/v1/briefs/[brief_id]/upstream-actions?action=update` with the fields and note, refreshes the page, and shows a new `current_version` and `downstream_state` as "opened"
+#### Scenario: Start a new update
+- **WHEN** the creator views an in-process brief where `draft_version` is `null` and clicks "推送更新"
+- **THEN** the system calls `POST /api/v1/briefs/[brief_id]/upstream-actions?action=update` with new version fields and a change note, refreshes the page, and shows a new `current_version` and `downstream_state` as "opened"
+
+#### Scenario: Continue an existing update draft
+- **WHEN** the creator views an in-process brief where `draft_version` is not `null`
+- **THEN** the page shows a "Continue update" button that loads the draft version content
+- **AND** clicking it calls `POST /api/v1/briefs/[brief_id]/upstream-actions?action=update` with the latest draft fields and a change note
 
 ### Requirement: Downstream can submit progress feedback
 The system SHALL allow the brief assignee to submit a progress update without changing the brief state.
