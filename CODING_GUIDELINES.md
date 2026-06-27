@@ -33,6 +33,7 @@
 
 ## 4. ORM Design
 - **Prevent unintentional queries:** set lazy="raise" in relationship.
+- **DO NOT use num / string to represent state:** always convert data in db to enum
 
 ## 5. Agent Specific Guidelines
 

@@ -3,16 +3,32 @@
 from enum import StrEnum
 
 
-class BriefStatus(StrEnum):
-    """Lifecycle status of a brief from the upstream perspective."""
+class BriefUpstreamState(StrEnum):
+    """Lifecycle state of a brief from the upstream perspective."""
+
+    EDITING = "editing"
+    SENT = "sent"
+    IN_PROCESS = "in_process"
+    SUSPENDED = "suspended"
+    CANCELLED = "cancelled"
+    DONE = "done"
+
+
+class BriefDownstreamState(StrEnum):
+    """Sub-state of a brief from the downstream perspective."""
+
+    OPENED = "opened"
+    DELEGATED = "delegated"
+    BLOCKED = "blocked"
+    SUBMITTED = "submitted"
+
+
+class BriefVersionStatus(StrEnum):
+    """Lifecycle status of a brief version."""
 
     DRAFT = "draft"
     REVIEWED = "reviewed"
     SENT = "sent"
-    ACCEPTED = "accepted"
-    DONE = "done"
-    BLOCKED = "blocked"
-    CANCELLED = "cancelled"
 
 
 class BriefPriority(StrEnum):
@@ -25,11 +41,22 @@ class BriefPriority(StrEnum):
 
 
 class FeedbackType(StrEnum):
-    """Types of feedback that a downstream can send."""
+    """Types of formal contract notifications exchanged about a brief."""
 
-    BLOCKED = "blocked"
+    # Upstream -> downstream
+    CANCEL = "cancel"
+    SUSPEND = "suspend"
+    RESUME = "resume"
+    APPROVE = "approve"
+    REJECT_SUBMIT = "reject_submit"
+    UPDATE = "update"
+
+    # Downstream -> upstream
+    SUBMIT = "submit"
+    BLOCK = "block"
+    DELEGATE = "delegate"
+    OPEN = "open"
     PROGRESS = "progress"
-    COMPLETION = "completion"
 
 
 class ArbiterReviewStatus(StrEnum):

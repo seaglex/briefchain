@@ -1,6 +1,7 @@
 """Pytest fixtures for BriefChain model and API tests."""
 
 from collections.abc import Generator
+from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
@@ -14,7 +15,12 @@ from briefchain.api.main import app
 from briefchain.api.security import create_access_token, get_password_hash
 from briefchain.models import Brief, BriefChain, BriefVersion, User
 from briefchain.models.base import Base
-from briefchain.models.enums import BriefPriority, BriefStatus, UserType
+from briefchain.models.enums import (
+    BriefPriority,
+    BriefUpstreamState,
+    BriefVersionStatus,
+    UserType,
+)
 
 
 @pytest.fixture
@@ -150,25 +156,44 @@ def draft_brief(db_session: Session, creator: User) -> Brief:
         root_id=UUID("11111111-1111-1111-1111-111111111111"),
         parent_id=None,
         is_root=True,
-        status=BriefStatus.DRAFT,
-        current_version=1,
+        upstream_state=BriefUpstreamState.EDITING,
+        downstream_state=None,
+        current_version=None,
+        title="Draft Brief",
+        priority=BriefPriority.P2,
+        expected_completion_at=None,
         created_by=creator.id,
+        created_by_name=creator.name,
         assigned_to=None,
+        assigned_to_name=None,
+        status_changed_by=creator.id,
+        status_changed_by_name=creator.name,
+        status_changed_at=datetime.now(UTC),
     )
     version = BriefVersion(
         brief_id=brief.brief_id,
         version=1,
+        status=BriefVersionStatus.DRAFT,
         title="Draft Brief",
         content="Content",
         attachments=[],
         priority=BriefPriority.P2,
         estimated_man_days=3.0,
+        expected_completion_at=None,
+        arbiter_review_id=None,
         is_upstream_changed=False,
         revision_reason="initial",
         modified_by=creator.id,
+        modified_by_name=creator.name,
         change_summary="Initial version",
     )
-    chain = BriefChain(chain_id=brief.brief_id, title="Draft Brief")
+    chain = BriefChain(
+        chain_id=brief.brief_id,
+        title="Draft Brief",
+        owner_id=creator.id,
+        owner_name=creator.name,
+        priority=BriefPriority.P2,
+    )
     db_session.add_all([brief, version, chain])
     db_session.commit()
     return brief

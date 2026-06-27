@@ -15,16 +15,24 @@ The system SHALL provide a Brief list page at `/briefs` that displays tabs for "
 - **WHEN** the user clicks a brief card in the list
 - **THEN** the system navigates to `/briefs/[brief_id]`
 
-### Requirement: Brief list supports status filter
-The system SHALL allow users to filter the brief list by status when the backend API supports it.
+### Requirement: Brief list supports upstream and downstream state filters
+The system SHALL allow users to filter the brief list by `upstream_state` and `downstream_state`.
 
-#### Scenario: Status filter applied
-- **WHEN** the user selects a status from the status dropdown
-- **THEN** the system calls `GET /api/v1/briefs?role=<role>&status=<status>` and displays only matching briefs
+#### Scenario: Upstream state filter applied
+- **WHEN** the user selects an upstream state from the upstream state dropdown
+- **THEN** the system calls `GET /api/v1/briefs?role=<role>&upstream_state=<upstream_state>` and displays only matching briefs
 
-#### Scenario: Clear status filter
-- **WHEN** the user clears the status dropdown
-- **THEN** the system calls `GET /api/v1/briefs?role=<role>` without a status filter
+#### Scenario: Downstream state filter applied
+- **WHEN** the user selects a downstream state from the downstream state dropdown
+- **THEN** the system calls `GET /api/v1/briefs?role=<role>&downstream_state=<downstream_state>` and displays only matching briefs
+
+#### Scenario: Combined state filters applied
+- **WHEN** the user selects both an upstream state and a downstream state
+- **THEN** the system calls `GET /api/v1/briefs?role=<role>&upstream_state=<upstream_state>&downstream_state=<downstream_state>` and displays only matching briefs
+
+#### Scenario: Clear state filters
+- **WHEN** the user clears the state dropdowns
+- **THEN** the system calls `GET /api/v1/briefs?role=<role>` without state filters
 
 ### Requirement: Brief list supports priority filter on loaded data
 The system SHALL allow users to filter the currently loaded brief list by priority when priority is not supported by the backend list API.
@@ -42,4 +50,4 @@ The system SHALL render brief cards using the visual style from `04-frontend-pro
 
 #### Scenario: Brief card rendering
 - **WHEN** the list page loads with briefs
-- **THEN** each card displays title, priority badge, status badge, and assignee information
+- **THEN** each card displays title, priority badge, upstream state badge, downstream state badge when present, and assignee information

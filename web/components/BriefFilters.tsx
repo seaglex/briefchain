@@ -7,15 +7,23 @@ const ROLES = [
   { key: "created", label: "我创建的" },
 ];
 
-const STATUSES = [
-  { key: "", label: "全部状态" },
-  { key: "draft", label: "draft" },
+const UPSTREAM_STATES = [
+  { key: "", label: "全部上游状态" },
+  { key: "editing", label: "editing" },
   { key: "reviewed", label: "reviewed" },
   { key: "sent", label: "sent" },
-  { key: "accepted", label: "accepted" },
-  { key: "done", label: "done" },
-  { key: "blocked", label: "blocked" },
+  { key: "in_process", label: "in_process" },
+  { key: "suspended", label: "suspended" },
   { key: "cancelled", label: "cancelled" },
+  { key: "done", label: "done" },
+];
+
+const DOWNSTREAM_STATES = [
+  { key: "", label: "全部下游状态" },
+  { key: "opened", label: "opened" },
+  { key: "submitted", label: "submitted" },
+  { key: "delegated", label: "delegated" },
+  { key: "blocked", label: "blocked" },
 ];
 
 const PRIORITIES = [
@@ -30,7 +38,8 @@ export default function BriefFilters() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const role = searchParams.get("role") || "assigned";
-  const status = searchParams.get("status") || "";
+  const upstreamState = searchParams.get("upstream_state") || "";
+  const downstreamState = searchParams.get("downstream_state") || "";
   const priority = searchParams.get("priority") || "";
 
   const updateParam = (key: string, value: string) => {
@@ -51,10 +60,20 @@ export default function BriefFilters() {
     <div className="filter-bar">
       <select
         className="filter-select"
-        value={status}
-        onChange={(e) => updateParam("status", e.target.value)}
+        value={upstreamState}
+        onChange={(e) => updateParam("upstream_state", e.target.value)}
       >
-        {STATUSES.map((s) => (
+        {UPSTREAM_STATES.map((s) => (
+          <option key={s.key} value={s.key}>{s.label}</option>
+        ))}
+      </select>
+
+      <select
+        className="filter-select"
+        value={downstreamState}
+        onChange={(e) => updateParam("downstream_state", e.target.value)}
+      >
+        {DOWNSTREAM_STATES.map((s) => (
           <option key={s.key} value={s.key}>{s.label}</option>
         ))}
       </select>

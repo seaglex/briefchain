@@ -5,6 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 from briefchain.api.schemas.briefs import BriefListItem
+from briefchain.models.enums import BriefDownstreamState, BriefUpstreamState
 
 
 class ChainListItem(BaseModel):
@@ -14,6 +15,9 @@ class ChainListItem(BaseModel):
 
     chain_id: UUID
     title: str
+    owner_id: UUID
+    owner_name: str
+    priority: str
     root_brief_id: UUID
     brief_count: int
     created_at: str
@@ -26,7 +30,8 @@ class BriefTreeNode(BaseModel):
 
     brief_id: UUID
     title: str
-    status: str
+    upstream_state: BriefUpstreamState
+    downstream_state: BriefDownstreamState | None
     children: list["BriefTreeNode"] = []
 
 
@@ -35,5 +40,8 @@ class ChainDetail(BaseModel):
 
     chain_id: UUID
     title: str
+    owner_id: UUID
+    owner_name: str
+    priority: str
     root_brief: BriefListItem
     tree: BriefTreeNode

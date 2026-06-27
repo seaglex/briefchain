@@ -55,8 +55,8 @@ export default async function BriefDetailPage({
   }
 
   const currentUserId = userResult.user.id;
-  const isCreator = brief.created_by.id === currentUserId;
-  const isAssignee = brief.assigned_to?.id === currentUserId;
+  const isCreator = brief.created_by_id === currentUserId;
+  const isAssignee = brief.assigned_to_id === currentUserId;
 
   return (
     <div className="app">
@@ -64,7 +64,7 @@ export default async function BriefDetailPage({
       <div className="main">
         <div className="topbar">
           <div className="flex items-center gap-8">
-            <Link href="/briefs?role=assigned" className="btn btn-sm">
+            <Link href={isCreator ? "/briefs?role=created" : "/briefs?role=assigned"} className="btn btn-sm">
               ← 返回
             </Link>
             <h2>Brief 详情</h2>
@@ -84,11 +84,14 @@ export default async function BriefDetailPage({
             actions={
               <BriefActions
                 briefId={brief.brief_id}
-                status={brief.status}
+                upstreamState={brief.upstream_state}
+                downstreamState={brief.downstream_state}
                 content={brief.content}
                 title={brief.title}
                 priority={brief.priority}
                 estimatedManDays={brief.estimated_man_days}
+                expectedCompletionAt={brief.expected_completion_at}
+                currentVersionStatus={brief.current_version_status}
                 isCreator={isCreator}
                 isAssignee={isAssignee}
               />

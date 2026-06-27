@@ -5,7 +5,7 @@ The system SHALL provide a Brief detail page at `/briefs/[brief_id]` that shows 
 
 #### Scenario: Detail page loads
 - **WHEN** an authenticated user navigates to `/briefs/[brief_id]`
-- **THEN** the page displays the brief title, status badge, priority badge, content, creator, assignee, and timestamps
+- **THEN** the page displays the brief title, upstream state badge, downstream state badge when present, priority badge, content, creator name, assignee name, and timestamps
 
 ### Requirement: Detail page provides tabbed sections
 The system SHALL provide tabs on the detail page for content, attachments, transfers, and feedbacks.
@@ -19,15 +19,39 @@ The system SHALL provide tabs on the detail page for content, attachments, trans
 - **THEN** the page displays the list of feedbacks for the brief
 
 ### Requirement: Detail page shows role-aware action buttons
-The system SHALL display action buttons based on the current user's relationship to the brief and the brief's status.
+The system SHALL display action buttons based on the current user's relationship to the brief and the brief's upstream/downstream state combination.
 
-#### Scenario: Upstream view
-- **WHEN** the current user is the brief creator and the brief status is `draft` or `reviewed`
-- **THEN** the page shows upstream actions such as edit and send
+#### Scenario: Upstream editing view
+- **WHEN** the current user is the brief creator and `upstream_state` is "editing"
+- **THEN** the page shows upstream actions such as edit and submit for review
 
-#### Scenario: Downstream view
-- **WHEN** the current user is the brief assignee and the brief status is `sent` or `accepted`
-- **THEN** the page shows downstream actions such as accept, reject, complete, or blocked feedback
+#### Scenario: Downstream transfer view
+- **WHEN** the current user is the brief assignee and `upstream_state` is "sent"
+- **THEN** the page shows transfer actions to accept or reject the brief
+
+#### Scenario: Downstream in-process view
+- **WHEN** the current user is the brief assignee, `upstream_state` is "in_process", and `downstream_state` is "opened"
+- **THEN** the page shows downstream actions such as delegate, block, and submit completion
+
+#### Scenario: Downstream delegated view
+- **WHEN** the current user is the brief assignee, `upstream_state` is "in_process", and `downstream_state` is "delegated"
+- **THEN** the page shows downstream actions such as reopen, block, and submit completion
+
+#### Scenario: Downstream submitted view
+- **WHEN** the current user is the brief assignee, `upstream_state` is "in_process", and `downstream_state` is "submitted"
+- **THEN** the page shows a downstream action to withdraw/reopen the submission
+
+#### Scenario: Upstream submitted view
+- **WHEN** the current user is the brief creator, `upstream_state` is "in_process", and `downstream_state` is "submitted"
+- **THEN** the page shows upstream actions such as approve, reject_submit, and push update
+
+#### Scenario: Downstream blocked view
+- **WHEN** the current user is the brief assignee, `upstream_state` is "in_process", and `downstream_state` is "blocked"
+- **THEN** the page shows a downstream action to resolve the blocker by reopening or delegating
+
+#### Scenario: Upstream suspended view
+- **WHEN** the current user is the brief creator and `upstream_state` is "suspended"
+- **THEN** the page shows upstream actions to resume or cancel the brief
 
 #### Scenario: Read-only view
 - **WHEN** the current user is neither the creator nor the assignee

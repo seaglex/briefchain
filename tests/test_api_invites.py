@@ -8,7 +8,12 @@ from sqlalchemy.orm import Session
 
 from briefchain.api.security import get_password_hash
 from briefchain.models import Brief, BriefChain, BriefVersion, User
-from briefchain.models.enums import BriefPriority, BriefStatus, UserType
+from briefchain.models.enums import (
+    BriefPriority,
+    BriefUpstreamState,
+    BriefVersionStatus,
+    UserType,
+)
 
 pytestmark = pytest.mark.usefixtures("jwt_secret")
 
@@ -24,25 +29,42 @@ def reviewed_brief_for_invite(
         root_id=UUID("11111111-1111-1111-1111-111111111111"),
         parent_id=None,
         is_root=True,
-        status=BriefStatus.REVIEWED,
-        current_version=1,
+        upstream_state=BriefUpstreamState.EDITING,
+        downstream_state=None,
+        current_version=None,
+        title="Reviewed Brief",
+        priority=BriefPriority.P2,
         created_by=creator.id,
+        created_by_name=creator.name,
         assigned_to=None,
+        assigned_to_name=None,
+        status_changed_by=creator.id,
+        status_changed_by_name=creator.name,
     )
     version = BriefVersion(
         brief_id=brief.brief_id,
         version=1,
+        status=BriefVersionStatus.REVIEWED,
         title="Reviewed Brief",
         content="Content",
         attachments=[],
         priority=BriefPriority.P2,
         estimated_man_days=3.0,
+        expected_completion_at=None,
+        arbiter_review_id=None,
         is_upstream_changed=False,
         revision_reason="initial",
         modified_by=creator.id,
+        modified_by_name=creator.name,
         change_summary="Initial version",
     )
-    chain = BriefChain(chain_id=brief.brief_id, title="Reviewed Brief")
+    chain = BriefChain(
+        chain_id=brief.brief_id,
+        title="Reviewed Brief",
+        owner_id=creator.id,
+        owner_name=creator.name,
+        priority=BriefPriority.P2,
+    )
     db_session.add_all([brief, version, chain])
     db_session.commit()
     return brief
@@ -56,7 +78,7 @@ def invite_response(
 ):
     """Send a brief to an external recipient and return the response."""
     response = client.post(
-        f"/api/v1/briefs/{reviewed_brief_for_invite.brief_id}/send",
+        f"/api/v1/briefs/{reviewed_brief_for_invite.brief_id}/transfer?action=send",
         headers=auth_headers_creator,
         json={
             "is_temporary_user": True,
@@ -75,7 +97,7 @@ def test_send_brief_to_external_creates_invite(
 ) -> None:
     """Sending to an external email creates a temporary user and invite URL."""
     response = client.post(
-        f"/api/v1/briefs/{reviewed_brief_for_invite.brief_id}/send",
+        f"/api/v1/briefs/{reviewed_brief_for_invite.brief_id}/transfer?action=send",
         headers=auth_headers_creator,
         json={
             "is_temporary_user": True,
@@ -86,7 +108,7 @@ def test_send_brief_to_external_creates_invite(
 
     assert response.status_code == 200
     data = response.json()
-    assert data["brief"]["status"] == "sent"
+    assert data["brief"]["upstream_state"] == "sent"
     assert "invite" in data
     assert data["invite"]["invite_url"].startswith("/invites/")
     assert "accept_deadline" in data["invite"]
@@ -100,7 +122,7 @@ def test_send_brief_to_anonymous_creates_invite(
 ) -> None:
     """Sending without email/phone creates an anonymous temporary user and invite URL."""
     response = client.post(
-        f"/api/v1/briefs/{reviewed_brief_for_invite.brief_id}/send",
+        f"/api/v1/briefs/{reviewed_brief_for_invite.brief_id}/transfer?action=send",
         headers=auth_headers_creator,
         json={
             "is_temporary_user": True,
@@ -110,7 +132,7 @@ def test_send_brief_to_anonymous_creates_invite(
 
     assert response.status_code == 200
     data = response.json()
-    assert data["brief"]["status"] == "sent"
+    assert data["brief"]["upstream_state"] == "sent"
     assert data["invite"]["invite_url"].startswith("/invites/")
 
 
@@ -122,7 +144,7 @@ def test_send_brief_to_existing_registered_email_uses_registered_user(
 ) -> None:
     """Sending to an email of a registered user falls back to registered send."""
     response = client.post(
-        f"/api/v1/briefs/{reviewed_brief_for_invite.brief_id}/send",
+        f"/api/v1/briefs/{reviewed_brief_for_invite.brief_id}/transfer?action=send",
         headers=auth_headers_creator,
         json={
             "is_temporary_user": True,
@@ -133,7 +155,7 @@ def test_send_brief_to_existing_registered_email_uses_registered_user(
 
     assert response.status_code == 200
     data = response.json()
-    assert data["brief"]["assigned_to"]["id"] == str(downstream.id)
+    assert data["brief"]["assigned_to_id"] == str(downstream.id)
     assert data.get("invite") is None
 
 
@@ -146,7 +168,7 @@ def test_send_brief_reuses_active_temporary_user(
     """Sending to an email of an active temporary user reuses the user_id."""
     # First send creates the temporary user
     first = client.post(
-        f"/api/v1/briefs/{reviewed_brief_for_invite.brief_id}/send",
+        f"/api/v1/briefs/{reviewed_brief_for_invite.brief_id}/transfer?action=send",
         headers=auth_headers_creator,
         json={
             "is_temporary_user": True,
@@ -155,7 +177,7 @@ def test_send_brief_reuses_active_temporary_user(
         },
     )
     first_data = first.json()
-    first_assigned_to = first_data["brief"]["assigned_to"]["id"]
+    first_assigned_to = first_data["brief"]["assigned_to_id"]
 
     # Create a second reviewed brief
     brief2 = Brief(
@@ -163,30 +185,47 @@ def test_send_brief_reuses_active_temporary_user(
         root_id=UUID("22222222-2222-2222-2222-222222222222"),
         parent_id=None,
         is_root=True,
-        status=BriefStatus.REVIEWED,
-        current_version=1,
+        upstream_state=BriefUpstreamState.EDITING,
+        downstream_state=None,
+        current_version=None,
+        title="Second Brief",
+        priority=BriefPriority.P2,
         created_by=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        created_by_name="Creator",
         assigned_to=None,
+        assigned_to_name=None,
+        status_changed_by=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        status_changed_by_name="Creator",
     )
     version2 = BriefVersion(
         brief_id=brief2.brief_id,
         version=1,
+        status=BriefVersionStatus.REVIEWED,
         title="Second Brief",
         content="Content",
         attachments=[],
         priority=BriefPriority.P2,
         estimated_man_days=3.0,
+        expected_completion_at=None,
+        arbiter_review_id=None,
         is_upstream_changed=False,
         revision_reason="initial",
         modified_by=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        modified_by_name="Creator",
         change_summary="Initial version",
     )
-    chain2 = BriefChain(chain_id=brief2.brief_id, title="Second Brief")
+    chain2 = BriefChain(
+        chain_id=brief2.brief_id,
+        title="Second Brief",
+        owner_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        owner_name="Creator",
+        priority=BriefPriority.P2,
+    )
     db_session.add_all([brief2, version2, chain2])
     db_session.commit()
 
     second = client.post(
-        f"/api/v1/briefs/{brief2.brief_id}/send",
+        f"/api/v1/briefs/{brief2.brief_id}/transfer?action=send",
         headers=auth_headers_creator,
         json={
             "is_temporary_user": True,
@@ -195,7 +234,7 @@ def test_send_brief_reuses_active_temporary_user(
         },
     )
     second_data = second.json()
-    assert second_data["brief"]["assigned_to"]["id"] == first_assigned_to
+    assert second_data["brief"]["assigned_to_id"] == first_assigned_to
     assert second_data["invite"]["invite_url"].startswith("/invites/")
 
 
@@ -242,7 +281,7 @@ def test_send_brief_to_finalized_temporary_user_uses_final_user(
     db_session.commit()
 
     response = client.post(
-        f"/api/v1/briefs/{reviewed_brief_for_invite.brief_id}/send",
+        f"/api/v1/briefs/{reviewed_brief_for_invite.brief_id}/transfer?action=send",
         headers=auth_headers_creator,
         json={
             "is_temporary_user": True,
@@ -253,30 +292,7 @@ def test_send_brief_to_finalized_temporary_user_uses_final_user(
 
     assert response.status_code == 200
     data = response.json()
-    assert data["brief"]["assigned_to"]["id"] == str(registered_user.id)
-    assert data.get("invite") is None
-
-
-def test_send_brief_to_existing_email_uses_registered_user(
-    client: TestClient,
-    auth_headers_creator: dict[str, str],
-    reviewed_brief_for_invite: Brief,
-    downstream: User,
-) -> None:
-    """Sending to an email of a registered user falls back to registered send."""
-    response = client.post(
-        f"/api/v1/briefs/{reviewed_brief_for_invite.brief_id}/send",
-        headers=auth_headers_creator,
-        json={
-            "is_temporary_user": True,
-            "recipient_email": downstream.email,
-            "recipient_name": "Downstream",
-        },
-    )
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["brief"]["assigned_to"]["id"] == str(downstream.id)
+    assert data["brief"]["assigned_to_id"] == str(registered_user.id)
     assert data.get("invite") is None
 
 
@@ -293,7 +309,7 @@ def test_view_invite(
     assert response.status_code == 200
     data = response.json()
     assert data["invite"]["name"] == "External User"
-    assert data["brief"]["status"] == "sent"
+    assert data["brief"]["upstream_state"] == "sent"
 
 
 def test_view_invite_rejects_tampered_token(
@@ -323,7 +339,8 @@ def test_accept_invite(
 
     assert response.status_code == 200
     data = response.json()
-    assert data["brief"]["status"] == "accepted"
+    assert data["brief"]["upstream_state"] == "in_process"
+    assert data["brief"]["downstream_state"] == "opened"
 
 
 def test_reject_invite(
@@ -341,7 +358,7 @@ def test_reject_invite(
 
     assert response.status_code == 200
     data = response.json()
-    assert data["brief"]["status"] == "draft"
+    assert data["brief"]["upstream_state"] == "editing"
 
 
 def test_reject_invite_requires_reason(
@@ -394,7 +411,7 @@ def test_register_migrates_all_active_briefs(
     """Registering with brief_id migrates all active briefs of the temporary user."""
     # Send first brief
     client.post(
-        f"/api/v1/briefs/{reviewed_brief_for_invite.brief_id}/send",
+        f"/api/v1/briefs/{reviewed_brief_for_invite.brief_id}/transfer?action=send",
         headers=auth_headers_creator,
         json={
             "is_temporary_user": True,
@@ -409,30 +426,47 @@ def test_register_migrates_all_active_briefs(
         root_id=UUID("66666666-6666-6666-6666-666666666666"),
         parent_id=None,
         is_root=True,
-        status=BriefStatus.REVIEWED,
-        current_version=1,
+        upstream_state=BriefUpstreamState.EDITING,
+        downstream_state=None,
+        current_version=None,
+        title="Second Brief",
+        priority=BriefPriority.P2,
         created_by=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        created_by_name="Creator",
         assigned_to=None,
+        assigned_to_name=None,
+        status_changed_by=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        status_changed_by_name="Creator",
     )
     version2 = BriefVersion(
         brief_id=brief2.brief_id,
         version=1,
+        status=BriefVersionStatus.REVIEWED,
         title="Second Brief",
         content="Content",
         attachments=[],
         priority=BriefPriority.P2,
         estimated_man_days=3.0,
+        expected_completion_at=None,
+        arbiter_review_id=None,
         is_upstream_changed=False,
         revision_reason="initial",
         modified_by=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        modified_by_name="Creator",
         change_summary="Initial version",
     )
-    chain2 = BriefChain(chain_id=brief2.brief_id, title="Second Brief")
+    chain2 = BriefChain(
+        chain_id=brief2.brief_id,
+        title="Second Brief",
+        owner_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        owner_name="Creator",
+        priority=BriefPriority.P2,
+    )
     db_session.add_all([brief2, version2, chain2])
     db_session.commit()
 
     client.post(
-        f"/api/v1/briefs/{brief2.brief_id}/send",
+        f"/api/v1/briefs/{brief2.brief_id}/transfer?action=send",
         headers=auth_headers_creator,
         json={
             "is_temporary_user": True,
@@ -539,11 +573,11 @@ def test_invite_invalidated_after_register(
     assert response.json()["error"]["code"] == "INVITE_INVALIDATED"
 
 
-def test_blocked_invite(
+def test_block_invite(
     client: TestClient,
     invite_response: dict,
 ) -> None:
-    """POST /invites/{token}/blocked marks brief as blocked and creates feedback."""
+    """POST /invites/{token}/block marks brief downstream_state as blocked."""
     invite_url = invite_response["invite"]["invite_url"]
     token = invite_url.split("/invites/")[1]
 
@@ -551,21 +585,20 @@ def test_blocked_invite(
     client.post(f"/api/v1/invites/{token}/accept")
 
     response = client.post(
-        f"/api/v1/invites/{token}/blocked",
+        f"/api/v1/invites/{token}/block",
         json={"reason": "Need clarification"},
     )
 
     assert response.status_code == 200
     data = response.json()
-    assert data["type"] == "blocked"
-    assert data["content"] == "Need clarification"
+    assert data["downstream_state"] == "blocked"
 
 
-def test_done_invite(
+def test_submit_invite(
     client: TestClient,
     invite_response: dict,
 ) -> None:
-    """POST /invites/{token}/done marks brief as done and creates completion feedback."""
+    """POST /invites/{token}/submit marks brief downstream_state as submitted."""
     invite_url = invite_response["invite"]["invite_url"]
     token = invite_url.split("/invites/")[1]
 
@@ -573,11 +606,10 @@ def test_done_invite(
     client.post(f"/api/v1/invites/{token}/accept")
 
     response = client.post(
-        f"/api/v1/invites/{token}/done",
-        json={"result": "Completed all tasks"},
+        f"/api/v1/invites/{token}/submit",
+        json={"content": "Completed all tasks"},
     )
 
     assert response.status_code == 200
     data = response.json()
-    assert data["type"] == "completion"
-    assert data["content"] == "Completed all tasks"
+    assert data["downstream_state"] == "submitted"

@@ -189,6 +189,7 @@ textarea { resize: vertical; min-height: 80px; }
 /* Modal */
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 24px; }
 .modal-card { background: var(--c-bg-2); border-radius: var(--radius); border: 0.5px solid var(--c-border); width: 100%; max-width: 420px; max-height: 90vh; overflow-y: auto; }
+.modal-card.modal-wide { max-width: 720px; }
 .modal-header { padding: 16px 20px; border-bottom: 0.5px solid var(--c-border); display: flex; justify-content: space-between; align-items: center; }
 .modal-body { padding: 20px; }
 .modal-footer { padding: 12px 20px; border-top: 0.5px solid var(--c-border); display: flex; justify-content: flex-end; gap: 8px; }

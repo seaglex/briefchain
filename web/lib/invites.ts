@@ -23,12 +23,20 @@ export interface BriefDetail {
   parent_id: string | null;
   title: string;
   content: string;
-  status: string;
+  upstream_state: string;
+  downstream_state: string | null;
   priority: string;
-  created_by: UserRef;
-  assigned_to: UserRef | null;
+  created_by_id: string;
+  created_by_name: string;
+  assigned_to_id: string | null;
+  assigned_to_name: string | null;
+  status_changed_by_id: string;
+  status_changed_by_name: string;
+  status_changed_at: string;
   estimated_man_days: number | null;
-  current_version: number;
+  expected_completion_at: string | null;
+  current_version: number | null;
+  current_version_status: string | null;
   version: number;
   is_current: boolean;
   attachments: unknown[];
@@ -39,8 +47,10 @@ export interface BriefDetail {
 export interface BriefTransfer {
   id: string;
   brief_version: number;
-  from_user: UserRef;
-  to_user: UserRef;
+  from_user_id: string;
+  from_user_name: string;
+  to_user_id: string;
+  to_user_name: string;
   sent_at: string;
   accepted_at: string | null;
   rejected_at: string | null;
@@ -76,12 +86,20 @@ export interface RejectInviteRequest {
   reason: string;
 }
 
-export interface BlockedInviteRequest {
+export interface BlockInviteRequest {
   reason: string;
 }
 
-export interface DoneInviteRequest {
-  result: string;
+export interface SubmitInviteRequest {
+  content: string;
+}
+
+export interface OpenInviteRequest {
+  reason: string;
+}
+
+export interface DelegateInviteRequest {
+  content?: string;
 }
 
 export async function getInvite(token: string) {
@@ -102,9 +120,9 @@ export async function rejectInvite(token: string, body: RejectInviteRequest) {
   });
 }
 
-export async function blockInvite(token: string, body: BlockedInviteRequest) {
+export async function blockInvite(token: string, body: BlockInviteRequest) {
   return apiFetch<{ id: string; type: string; content: string; from_user: UserRef; created_at: string }>(
-    `/api/invites/${token}/blocked`,
+    `/api/invites/${token}/block`,
     {
       method: "POST",
       body: JSON.stringify(body),
@@ -112,14 +130,28 @@ export async function blockInvite(token: string, body: BlockedInviteRequest) {
   );
 }
 
-export async function doneInvite(token: string, body: DoneInviteRequest) {
+export async function submitInvite(token: string, body: SubmitInviteRequest) {
   return apiFetch<{ id: string; type: string; content: string; from_user: UserRef; created_at: string }>(
-    `/api/invites/${token}/done`,
+    `/api/invites/${token}/submit`,
     {
       method: "POST",
       body: JSON.stringify(body),
     }
   );
+}
+
+export async function openInvite(token: string, body: OpenInviteRequest) {
+  return apiFetch<BriefDetail>(`/api/invites/${token}/open`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function delegateInvite(token: string, body?: DelegateInviteRequest) {
+  return apiFetch<BriefDetail>(`/api/invites/${token}/delegate`, {
+    method: "POST",
+    body: JSON.stringify(body ?? {}),
+  });
 }
 
 export async function getInviteTransfers(token: string) {
@@ -131,7 +163,7 @@ export async function getInviteFeedbacks(token: string) {
 }
 
 export async function sendBrief(briefId: string, body: SendBriefRequest) {
-  return apiFetch<SendBriefResponse>(`/api/briefs/${briefId}/send`, {
+  return apiFetch<SendBriefResponse>(`/api/briefs/${briefId}/transfer?action=send`, {
     method: "POST",
     body: JSON.stringify(body),
   });

@@ -1,7 +1,7 @@
 # BriefChain REST API 设计文档
 
-> 版本：MVP v0.3
-> 最后更新：2026-06-23
+> 版本：MVP v0.8
+> 最后更新：2026-06-27
 > 基础路径：`/api/v1`
 
 ---
@@ -9,9 +9,16 @@
 ## 设计原则
 
 - **JWT 认证**：登录后所有请求带 `Authorization: Bearer <token>`
-- **权限模型（MVP）**：`created_by` 有全部读写权限，其他人有只读权限
+- **user_id 解析**：所有 Brief / Transfer / Feedback 读写操作，后端从 JWT 解析 `user_id`，校验操作人与 brief 角色关系（upstream = created_by, downstream = assigned_to）。前端不传 user_id，后端强制从 JWT 提取
+- **权限模型（MVP）**：`created_by`（upstream）有全部读写权限；`assigned_to`（downstream）有下游操作权限；其他人只读
 - **状态码**：标准 HTTP 状态码，错误返回统一格式
 - **分页**：游标分页（cursor-based），避免 offset 性能问题
+- **API 聚类**：端点按状态阶段分为 4 组，每组用路径表达阶段 + `action` 参数表达动作，结构完全一致：
+  - `POST /briefs/:id/editing?action={patch | review}`
+  - `POST /briefs/:id/transfer?action={send | accept | reject}`
+  - `POST /briefs/:id/upstream-actions?action={cancel | suspend | resume | approve | reject_submit | update}`
+  - `POST /briefs/:id/downstream-actions?action={process | submit | open | delegate | block}`
+- **冗余存储人名**：briefs / feedbacks / transfers / chains 表冗余存储用户名字（name 快照），合约语义上名字是操作时的签名，列表查询不需要 JOIN users 表
 
 ---
 
@@ -175,11 +182,11 @@ Response 204
 > Brief 接口有三种响应模式：
 > | 模式 | 包含字段 | 使用场景 |
 > |---|---|---|
-> | **列表模式** | `brief_id`, `title`, `status`, `priority`, `created_by`, `assigned_to`, `updated_at` | 2.2 列表查询 |
+> | **列表模式** | `brief_id`, `title`, `upstream_state`, `downstream_state`, `priority`, `created_by_id`, `created_by_name`, `assigned_to_id`, `assigned_to_name`, `status_changed_by_id`, `status_changed_by_name`, `status_changed_at`, `updated_at` | 2.2 列表查询 |
 > | **详情模式** | 列表模式 + `content`, `attachments`, `current_version` | 2.3 获取单个 Brief |
 > | **版本模式** | 详情模式 + `version`, `is_current` | 2.3 `?version=` 参数 |
 >
-> 除用户相关接口外，其他接口的用户对象只返回 `id` 和 `name`，需要完整信息请调 `GET /users/:user_id`（7.2）。
+> **人名冗余存储**：所有涉及用户的字段（created_by / assigned_to / from_user / to_user）都冗余存储 name（快照），响应中拆成 `id` + `name` 两个平级字段，不嵌套成对象。需要用户完整信息请调 `GET /users/:user_id`（11.2）。
 
 ### 2.1 创建 Brief
 
@@ -191,10 +198,11 @@ Response 204
   "title": "优化首页加载速度",
   "content": "当前首页首屏加载时间 3.2s，目标降到 1.5s 以内...",
   "attachments": [
-    { "name": "性能报告.png", "url": "/api/v1/files/...", "type": "image" }  // 先调 8.1 上传拿 url
+    { "name": "性能报告.png", "url": "/api/v1/files/...", "type": "image" }  // 先调 12.1 上传拿 url
   ],
   "priority": "p1",
   "estimated_man_days": 3,
+  "expected_completion_at": "2026-07-05T00:00:00Z",  // 可选，预期完成时间
   "parent_id": null
 }
 
@@ -204,41 +212,54 @@ Response 204
     "brief_id": "guid",
     "root_id": "guid",
     "parent_id": null,
-    "current_version": 1,
-    "status": "draft",
+    "current_version": null,        // 初始为 null，第一次 sent 后变为 1
+    "upstream_state": "editing",    // 新建 brief = upstream 编写中
+    "downstream_state": null,       // 还没 downstream
     "title": "优化首页加载速度",
     "priority": "p1",
     "estimated_man_days": 3,
-    "created_by": { "id": "guid", "name": "张三" },
-    "assigned_to": null,
+    "expected_completion_at": "2026-07-05T00:00:00Z",
+    "created_by_id": "guid",
+    "created_by_name": "张三",
+    "assigned_to_id": null,
+    "assigned_to_name": null,
+    "status_changed_by_id": "guid",
+    "status_changed_by_name": "张三",
+    "status_changed_at": "2026-06-20T22:00:00Z",
     "created_at": "2026-06-20T22:00:00Z",
     "updated_at": "2026-06-20T22:00:00Z"
   }
 }
 ```
 
+> user_id 从 JWT 解析，设为 `created_by`；从 users 表读取 name 写入 `created_by_name`（冗余快照）
+
 ### 2.2 列表查询 Brief
 
-`GET /briefs?status=draft&role=created&page_cursor=abc&page_size=20`
+`GET /briefs?upstream_state=editing&role=created&page_cursor=abc&page_size=20`
 
 查询参数：
-- `status` — 过滤状态
-- `role` — `created`（我创建的）/ `assigned`（分配给我的）/ `all`（全部可读）
+- `upstream_state` — 过滤 upstream 状态，多选（前端可以分成 unassigned / assigned / ended / all 几种）
+- `downstream_state` — 过滤 downstream 状态，多选（前端直接使用 opened / delegated / blocked / submitted / ended 几种） 
+- `role` — `created`（我创建的）/ `assigned`（分配给我的）
 - `root_id` — 过滤某棵树
 - `page_cursor` — 分页游标
 - `page_size` — 每页数量，默认 20
 
-```
+```json
 Response 200
 {
   "briefs": [
     {
       "brief_id": "guid",
       "title": "优化首页加载速度",
-      "status": "draft",
+      "upstream_state": "editing",
+      "downstream_state": null,
       "priority": "p1",
-      "created_by": { "id": "guid", "name": "张三" },
-      "assigned_to": null,
+      "created_by_id": "guid",
+      "created_by_name": "张三",
+      "assigned_to_id": null,
+      "assigned_to_name": null,
       "updated_at": "2026-06-20T22:00:00Z"
     }
   ],
@@ -247,6 +268,7 @@ Response 200
 ```
 
 > 列表模式：不包含 `content` 和 `attachments`，减少响应大小
+> 人名字段从冗余存储直接读取，不需要 JOIN users 表
 
 ### 2.3 获取单个 Brief（含版本内容）
 
@@ -255,7 +277,7 @@ Response 200
 查询参数：
 - `version` — 可选，指定版本号；不传则返回当前版本（`current_version`）
 
-```
+```json
 Response 200
 {
   "brief": {
@@ -264,7 +286,8 @@ Response 200
     "parent_id": null,
     "version": 1,              // 本次返回的版本号
     "is_current": true,         // 是否为当前版本
-    "status": "draft",
+    "upstream_state": "editing",
+    "downstream_state": null,
     "title": "...",
     "content": "...",            // 该版本的内容
     "attachments": [             // 该版本的附件
@@ -272,71 +295,115 @@ Response 200
     ],
     "priority": "p1",
     "estimated_man_days": 3,
-    "created_by": { "id": "guid", "name": "张三" },
-    "assigned_to": null,
+    "expected_completion_at": "2026-07-05T00:00:00Z",
+    "created_by_id": "guid",
+    "created_by_name": "张三",
+    "assigned_to_id": null,
+    "assigned_to_name": null,
     "created_at": "2026-06-20T22:00:00Z",
     "updated_at": "2026-06-20T22:00:00Z"
   }
 }
 ```
 
-> 权限：created_by 或只读权限用户可访问  
+> user_id 从 JWT 解析，有读权限即可访问（created_by 全权限，assigned_to 下游权限，其他人只读）
 > 通过 `?version=` 参数可获取历史版本，无需单独调用版本详情
 
-### 2.4 更新 Brief（仅 draft 状态）
+---
 
-`PATCH /briefs/:brief_id`
+## 3. Editing 端点（`/briefs/:brief_id/editing`）
+
+> 编辑阶段只在 upstream_state = editing 时可用。这些端点只修改版本内容，不改变 upstream_state / downstream_state。
+> 统一入口，通过 `action` 参数指定具体动作。
+
+`POST /briefs/:brief_id/editing`
+
+### 3.1 patch（更新内容，仅 editing 状态）
 
 ```json
-// Request（只传需要更新的字段）
+// Request
 {
-  "title": "新标题",
-  "content": "更新后的内容",
-  "priority": "p0"
+  "action": "patch",
+  "title": "新标题",                    // 可选，只传需要更新的字段
+  "content": "更新后的内容",             // 可选
+  "priority": "p0",                     // 可选
+  "expected_completion_at": "2026-07-10T00:00:00Z"  // 可选，调整预期完成时间
 }
 
 // Response 200
 {
   "brief": {
     "brief_id": "guid",
-    "root_id": "guid",
-    "parent_id": null,
-    "current_version": 2,
-    "status": "draft",
+    "upstream_state": "editing",
+    "downstream_state": null,
+    "current_version": null,    // 还没 sent，current_version 不变
     "title": "新标题",
     "priority": "p0",
     "estimated_man_days": 3,
-    "created_by": { "id": "guid", "name": "张三" },
-    "assigned_to": null,
+    "created_by_id": "guid",
+    "created_by_name": "张三",
+    "assigned_to_id": null,
+    "assigned_to_name": null,
+    "status_changed_by_id": "guid",
+    "status_changed_by_name": "张三",
+    "status_changed_at": "2026-06-20T22:00:00Z",
     "created_at": "2026-06-20T22:00:00Z",
     "updated_at": "2026-06-20T22:10:00Z"
   },
-  "version": 2
+  "version": 1
 }
 ```
 
-> 权限：只有 created_by 可更新，且 status = draft
+> user_id 从 JWT 解析，校验 = created_by，且 upstream_state = editing
+> **版本行为：** patch 修改当前 draft 版本的内容，不创建新版本
+> - 如果当前版本 status=draft（从未 sent）→ 直接修改该版本，version 不变，briefs.title/priority 同步更新
+> - 如果当前版本 status=sent（被 reject 回 editing）→ 创建新 draft 版本 v(n+1)，briefs.current_version 不变（仍指向旧 sent 版本），briefs.title/priority 不变
+> 新版本号只有在 transfer 端点 send 或 upstream-actions update 走完整 draft→reviewed→sent 流程后才写入 briefs.current_version
 
-### 2.5 提交审查（draft → reviewed）
+### 3.2 review（提交审查，版本 draft → reviewed）
 
-`POST /briefs/:brief_id/submit`
-
-```
-Request body: 空或 { "note": "请审查" }
-
-Response 200
+```json
+// Request
 {
-  "brief": { "status": "reviewed", ... },
+  "action": "review",
+  "note": "请审查"   // 可选
+}
+
+// Response 200
+{
+  "brief": {
+    "upstream_state": "editing",    // 不变，editing 统一表达编写阶段
+    "downstream_state": null,
+    "status_changed_by_id": "guid",
+    "status_changed_by_name": "张三",
+    "status_changed_at": "2026-06-20T22:00:00Z",
+    ...                   // 其余字段同 2.1
+  },
+  "version": {
+    "version": 1,
+    "status": "reviewed",           // 版本状态变 reviewed
+    "arbiter_review_id": "guid"     // 审查记录 ID
+  },
   "message": "Brief 已提交，等待审查"
 }
 ```
 
-> MVP 阶段：跳过 Arbiter，直接转 reviewed  
+> user_id 从 JWT 解析，校验 = created_by
+> 版本状态：当前 draft 版本 → reviewed（arbiter_review_id 填入 brief_versions）
+> upstream_state 不变（editing 统一表达编写阶段，draft/reviewed 只在版本层面区分）
+> MVP 阶段：跳过 Arbiter，直接转 reviewed（arbiter_review_id 记录 force_skipped）
 > 后续：调用 Arbiter LLM，通过才转 reviewed
 
-### 2.6 发送 Brief（reviewed → sent）
+---
 
-`POST /briefs/:brief_id/send`
+## 4. Transfer 端点（邀约阶段）
+
+> Transfer 端点处理 brief 从 upstream 到 downstream 的初始交接。记录在 brief_transfer_history。
+> 统一入口，通过 `action` 参数指定具体动作。
+
+`POST /briefs/:brief_id/transfer`
+
+### 4.1 send（邀约：editing → sent）
 
 通过 `is_temporary_user` 参数区分两种发送方式：
 
@@ -345,15 +412,16 @@ Response 200
 ```json
 // Request
 {
+  "action": "send",
   "is_temporary_user": false,
   "assigned_to": "downstream_user_guid",
   "note": "请帮忙评估工时"
 }
 
-// Response 200
+// Response 200 — 方式一
 {
-  "brief": { "status": "sent", "assigned_to": "downstream_user_guid", ... },
-  "transfer": { "sent_at": "2026-06-20T22:30:00Z", "accepted_at": null, "rejected_at": null }
+  "brief": { "upstream_state": "sent", "downstream_state": null, "assigned_to_id": "downstream_user_guid", "assigned_to_name": "李四", "status_changed_by_id": "guid", "status_changed_by_name": "张三", "status_changed_at": "...", ... },
+  "transfer": { "from_user_id": "guid", "from_user_name": "张三", "to_user_id": "guid", "to_user_name": "李四", "sent_at": "2026-06-20T22:30:00Z", "accepted_at": null, "rejected_at": null }
 }
 ```
 
@@ -362,6 +430,7 @@ Response 200
 ```json
 // Request
 {
+  "action": "send",
   "is_temporary_user": true,
   "recipient_email": "lisi@example.com",     // 可选，email 和 phone 至多填一个
   "recipient_phone": null,                   // 可选
@@ -373,8 +442,8 @@ Response 200
 
 // Response 200 — 新建临时用户
 {
-  "brief": { "status": "sent", "assigned_to": "临时用户UUID", ... },
-  "transfer": { "to_user": "临时用户UUID", "sent_at": "...", ... },
+  "brief": { "upstream_state": "sent", "downstream_state": null, "assigned_to_id": "临时用户UUID", "assigned_to_name": "李四", ... },
+  "transfer": { "from_user_id": "guid", "from_user_name": "张三", "to_user_id": "临时用户UUID", "to_user_name": "李四", "sent_at": "...", ... },
   "invite": {
     "invite_url": "/invites/{token}",
     "accept_deadline": "2026-06-27T22:30:00Z",
@@ -384,94 +453,326 @@ Response 200
 
 // Response 200 — email/phone 命中已注册用户，自动转方式一
 {
-  "brief": { "status": "sent", "assigned_to": "注册用户UUID", ... },
-  "transfer": { "to_user": "注册用户UUID", "sent_at": "...", ... }
+  "brief": { "upstream_state": "sent", "downstream_state": null, "assigned_to_id": "注册用户UUID", "assigned_to_name": "李四", ... },
+  "transfer": { "from_user_id": "guid", "from_user_name": "张三", "to_user_id": "注册用户UUID", "to_user_name": "李四", "sent_at": "...", ... }
   // 无 invite 字段
 }
 ```
 
 > 校验规则：
+> - user_id 从 JWT 解析，校验 = created_by
+> - upstream_state 必须为 editing，版本必须为 reviewed（或 MVP: force_skipped）
 > - `is_temporary_user=false`：必须有 `assigned_to`
 > - `is_temporary_user=true`：`recipient_email` 和 `recipient_phone` 至多填一个（可都不填）；无 `assigned_to`
-> - 方式二查找逻辑（详见 05-invite-link-design.md 第 6.1 节）：
->   - email/phone 命中 registered/oauth 用户 → 自动转方式一
->   - email/phone 命中 temporary 用户且 `final_user_id` 为空 → 复用该 user_id，新建 invite
->   - email/phone 命中 temporary 用户且 `final_user_id` 不为空 → 用 `final_user_id` 走方式一
->   - 未命中或未填 email/phone → 新建临时用户 + invite
-> - 权限：只有 created_by 可发送
+> - 方式二查找逻辑（详见 05-invite-link-design.md 第 6.1 节）
+> **版本同步：** sent 时当前版本 status → sent，同步更新 briefs.current_version / title / priority / expected_completion_at
+> transfer_history 记录 from_user_name / to_user_name（冗余快照）
+> transfer_history.arbiter_review_id 从 brief_versions.arbiter_review_id 读取
+> **已建立合约后推送新版本，用 upstream-actions 的 update（5.5）**
 
-### 2.7 接受 Brief（sent → accepted）
-
-`POST /briefs/:brief_id/accept`
-
-```
-Request body: 空或 { "note": "已理解，开始排期" }
-
-Response 200
-{
-  "brief": { "status": "accepted", ... },
-  "transfer": { "accepted_at": "2026-06-20T22:35:00Z" }
-}
-```
-
-> 权限：只有 assigned_to 可接受
-
-### 2.8 拒绝 Brief（sent → draft）
-
-`POST /briefs/:brief_id/reject`
+### 4.2 accept（邀约：sent → in_process）
 
 ```json
 // Request
-{ "reason": "验收标准不清晰，请补充具体性能指标" }
+{
+  "action": "accept",
+  "note": "已理解，开始排期"   // 可选
+}
 
 // Response 200
 {
-  "brief": { "status": "draft", ... },
-  "transfer": { "rejected_at": "2026-06-20T22:40:00Z", "rejection_reason": "..." }
+  "brief": { "upstream_state": "in_process", "downstream_state": "opened", "status_changed_by_id": "guid", "status_changed_by_name": "李四", "status_changed_at": "2026-06-20T22:35:00Z", ... },
+  "transfer": { "from_user_id": "guid", "from_user_name": "张三", "to_user_id": "guid", "to_user_name": "李四", "accepted_at": "2026-06-20T22:35:00Z" }
 }
 ```
 
-> 权限：只有 assigned_to 可拒绝
+> user_id 从 JWT 解析，校验 = assigned_to
+> upstream_state: sent → in_process；downstream_state: null → opened
 
-### 2.9 取消 Brief
+### 4.3 reject（邀约：sent → editing）
 
-`POST /briefs/:brief_id/cancel`
+```json
+// Request
+{
+  "action": "reject",
+  "reason": "验收标准不清晰，请补充具体性能指标"   // 必填
+}
 
-```
-Response 200
-{ "brief": { "status": "cancelled", ... } }
-```
-
-> 权限：只有 created_by 可取消，且 status 不是 done
-
-### 2.10 完成 Brief（accepted → done）
-
-`POST /briefs/:brief_id/complete`
-
-```
-Response 200
-{ "brief": { "status": "done", ... } }
+// Response 200
+{
+  "brief": { "upstream_state": "editing", "downstream_state": null, "assigned_to_id": null, "assigned_to_name": null, "status_changed_by_id": "guid", "status_changed_by_name": "李四", "status_changed_at": "2026-06-20T22:40:00Z", ... },
+  "transfer": { "from_user_id": "guid", "from_user_name": "张三", "to_user_id": "guid", "to_user_name": "李四", "rejected_at": "2026-06-20T22:40:00Z", "rejection_reason": "验收标准不清晰..." }
+}
 ```
 
-> 简化版：assigned_to 可以直接标记完成  
-> 完整版（后续）：需要提交 completion feedback + Arbiter 审查通过
+> user_id 从 JWT 解析，校验 = assigned_to
+> upstream_state: sent → editing；downstream_state: null → null；assigned_to_id/name → null（清除分配）
+> 不创建 feedback（邀约阶段的拒绝走 transfer_history，不是合约期通知）
 
 ---
 
-## 3. Brief 版本（`/briefs/:brief_id/versions`）
+## 5. Upstream-action 端点（`/briefs/:brief_id/upstream-actions`）
 
-### 3.1 列出所有版本
+> upstream 在 brief 被接单后（upstream_state = in_process / suspended）的操作。
+> 统一入口，通过 `action` 参数指定具体动作。
+
+`POST /briefs/:brief_id/upstream-actions`
+
+### 5.1 cancel（取消合约）
+
+```json
+// Request
+{
+  "action": "cancel",
+  "content": "项目暂停"           // 必填，取消原因
+}
+
+// Response 200
+{
+  "brief": { "upstream_state": "cancelled", "downstream_state": "opened", "status_changed_by_id": "guid", "status_changed_by_name": "张三", "status_changed_at": "...", ... },
+  "feedback": { "id": "guid", "is_to_down": true, "type": "cancel", "from_user_id": "guid", "from_user_name": "张三", "to_user_id": "guid", "to_user_name": "李四", ... }
+}
+```
+
+> user_id 从 JWT 解析，校验 = created_by，且 upstream_state 不是 done/cancelled
+> upstream_state → cancelled，downstream_state 保留（用于历史审计）
+> 创建一条 feedback (type=cancel, is_to_down=true)
+
+### 5.2 suspend（暂停） / resume（恢复）
+
+```json
+// Request — suspend
+{
+  "action": "suspend",
+  "content": "项目优先级调整，暂停执行"   // 必填，暂停原因
+}
+
+// Response 200 — suspend
+{
+  "brief": { "upstream_state": "suspended", "downstream_state": "opened", "status_changed_by_id": "guid", "status_changed_by_name": "张三", "status_changed_at": "...", ... },
+  "feedback": { "id": "guid", "is_to_down": true, "type": "suspend", "from_user_id": "guid", "from_user_name": "张三", "to_user_id": "guid", "to_user_name": "李四", ... }
+}
+
+// Request — resume
+{
+  "action": "resume",
+  "content": "优先级恢复，继续执行"   // 必填，恢复原因
+}
+
+// Response 200 — resume
+{
+  "brief": { "upstream_state": "in_process", "downstream_state": "opened", "status_changed_by_id": "guid", "status_changed_by_name": "张三", "status_changed_at": "...", ... },
+  "feedback": { "id": "guid", "is_to_down": true, "type": "resume", "from_user_id": "guid", "from_user_name": "张三", "to_user_id": "guid", "to_user_name": "李四", ... }
+}
+```
+
+> suspend: user_id 从 JWT 解析，校验 = created_by，upstream_state 必须为 in_process / sent
+> upstream_state → suspended，downstream_state 保留不动
+> resume: user_id 从 JWT 解析，校验 = created_by，upstream_state 必须为 suspended
+> upstream_state → in_process，downstream_state 原样恢复
+> 不需要 previous_status 字段
+
+### 5.3 approve（验收通过）
+
+```json
+// Request
+{
+  "action": "approve",
+  "content": "验收通过，首屏加载 1.2s 达标"   // 必填，验收说明
+}
+
+// Response 200
+{
+  "brief": { "upstream_state": "done", "downstream_state": null, "status_changed_by_id": "guid", "status_changed_by_name": "张三", "status_changed_at": "...", ... },
+  "feedback": { "id": "guid", "is_to_down": true, "type": "approve", "from_user_id": "guid", "from_user_name": "张三", "to_user_id": "guid", "to_user_name": "李四", ... }
+}
+```
+
+> user_id 从 JWT 解析，校验 = created_by，且 upstream_state = in_process + downstream_state = submitted
+> upstream_state → done，downstream_state → null。done 是终态
+
+### 5.4 reject_submit（打回提交）
+
+```json
+// Request
+{
+  "action": "reject_submit",
+  "content": "验收标准未达标，首屏加载时间仍为 2.1s，目标 1.5s 以内"   // 必填，打回原因
+}
+
+// Response 200
+{
+  "brief": { "upstream_state": "in_process", "downstream_state": "opened", "status_changed_by_id": "guid", "status_changed_by_name": "张三", "status_changed_at": "...", ... },
+  "feedback": { "id": "guid", "is_to_down": true, "type": "reject_submit", "from_user_id": "guid", "from_user_name": "张三", "to_user_id": "guid", "to_user_name": "李四", ... }
+}
+```
+
+> user_id 从 JWT 解析，校验 = created_by，且 downstream_state = submitted
+> upstream_state 不变（in_process），downstream_state → opened（强制重做）
+> brief 内容不变，downstream 需继续修改后重新提交
+> downstream 不能 block 此动作（打回是强制合约动作）
+
+### 5.5 update（推送新版本）
+
+```json
+// Request
+{
+  "action": "update",
+  "content": "新增需求：需要支持暗黑模式",   // 必填，变更说明
+  "title": "优化首页加载速度 + 暗黑模式支持",
+  "priority": "p1",
+  // ... 其他 brief_versions 字段
+  "revision_reason": "新增暗黑模式需求"
+}
+
+// Response 200
+{
+  "brief": { "upstream_state": "in_process", "downstream_state": "opened", "current_version": 2, "status_changed_by_id": "guid", "status_changed_by_name": "张三", "status_changed_at": "...", "title": "优化首页加载速度 + 暗黑模式支持", "priority": "p1", ... },
+  "feedback": { "id": "guid", "is_to_down": true, "type": "update", "from_user_id": "guid", "from_user_name": "张三", "to_user_id": "guid", "to_user_name": "李四", ... }
+}
+```
+
+> user_id 从 JWT 解析，校验 = created_by，且 upstream_state = in_process（只要不是 done/cancelled）
+> **版本流转：** update 走完整版本生命周期（MVP: auto-pass）：
+> 1. 创建新版本 v(n+1): draft
+> 2. 自动提交 Arbiter 审查 → v(n+1): reviewed（arbiter_review_id 填入，MVP: force_skipped）
+> 3. 自动 sent → v(n+1): sent（v(n) 仍为 sent，但 briefs.current_version 增大自动作废）
+> 4. briefs.current_version = n+1，briefs.title/priority 同步
+> 5. downstream_state → opened（强制重开，需求变了下游必须基于新版本重新执行）
+> 6. 创建 feedback (type=update, is_to_down=true)
+> **downstream 可以 block 来表达"不接受更新"**，但 block 只是通知，不阻止 update 的状态变更
+
+---
+
+## 6. Downstream-action 端点（`/briefs/:brief_id/downstream-actions`）
+
+> downstream 在 brief 被接单后（upstream_state = in_process）的操作。
+> 统一入口，通过 `action` 参数指定具体动作。
+> downstream 自由控制 downstream_state（可从任意下游状态切换）。
+
+`POST /briefs/:brief_id/downstream-actions`
+
+### 6.1 process（进度更新）
+
+```json
+// Request
+{
+  "action": "process",
+  "content": "已完成接口层优化，预计明天完成前端集成",   // 可空
+  "attachments": []                                   // 可选
+}
+
+// Response 200
+{
+  "brief": { ... },   // 状态不变
+  "feedback": { "id": "guid", "is_to_down": false, "type": "progress", "from_user_id": "guid", "from_user_name": "李四", "to_user_id": "guid", "to_user_name": "张三", ... }
+}
+```
+
+> user_id 从 JWT 解析，校验 = assigned_to，upstream_state = in_process
+> 不改变 upstream_state / downstream_state，创建 progress feedback
+
+### 6.2 submit（提交完成）
+
+```json
+// Request
+{
+  "action": "submit",
+  "content": "已完成所有优化，首屏加载时间降至 1.2s...",   // 必填，完成说明
+  "attachments": []                                      // 可选，证据附件
+}
+
+// Response 200
+{
+  "brief": { "upstream_state": "in_process", "downstream_state": "submitted", "status_changed_by_id": "guid", "status_changed_by_name": "李四", "status_changed_at": "...", ... },
+  "feedback": { "id": "guid", "is_to_down": false, "type": "submit", "from_user_id": "guid", "from_user_name": "李四", "to_user_id": "guid", "to_user_name": "张三", ... }
+}
+```
+
+> user_id 从 JWT 解析，校验 = assigned_to，upstream_state = in_process
+> downstream_state → submitted（可从任意下游状态发起）
+> 创建 feedback (type=submit, is_to_down=false)
+
+### 6.3 open（主动重开）
+
+```json
+// Request
+{
+  "action": "open",
+  "content": "提交后发现还有遗漏，主动撤回重做"   // 必填，重开原因
+}
+
+// Response 200
+{
+  "brief": { "upstream_state": "in_process", "downstream_state": "opened", "status_changed_by_id": "guid", "status_changed_by_name": "李四", "status_changed_at": "...", ... },
+  "feedback": { "id": "guid", "is_to_down": false, "type": "open", "from_user_id": "guid", "from_user_name": "李四", "to_user_id": "guid", "to_user_name": "张三", ... }
+}
+```
+
+> user_id 从 JWT 解析，校验 = assigned_to，upstream_state = in_process
+> downstream_state → opened（可从 submitted/delegated/blocked 发起）
+> 常见场景：从 submitted 撤回（自己觉得做得不够好）
+> 创建 feedback (type=open, is_to_down=false)
+
+### 6.4 delegate（拆解委派）
+
+```json
+// Request
+{
+  "action": "delegate",
+  "content": "已拆解为 3 个子任务"   // 可空
+}
+
+// Response 200
+{
+  "brief": { "upstream_state": "in_process", "downstream_state": "delegated", "status_changed_by_id": "guid", "status_changed_by_name": "李四", "status_changed_at": "...", ... },
+  "feedback": { "id": "guid", "is_to_down": false, "type": "delegate", "from_user_id": "guid", "from_user_name": "李四", "to_user_id": "guid", "to_user_name": "张三", ... }
+}
+```
+
+> user_id 从 JWT 解析，校验 = assigned_to，upstream_state = in_process
+> downstream_state → delegated
+> 创建 feedback (type=delegate, is_to_down=false) — 通知 upstream 了解拆解进展
+
+### 6.5 block（标记阻塞）
+
+```json
+// Request
+{
+  "action": "block",
+  "content": "依赖的上游 API 未就绪，无法继续",   // 必填，阻塞原因
+  "attachments": []                                // 可选
+}
+
+// Response 200
+{
+  "brief": { "upstream_state": "in_process", "downstream_state": "blocked", "status_changed_by_id": "guid", "status_changed_by_name": "李四", "status_changed_at": "...", ... },
+  "feedback": { "id": "guid", "is_to_down": false, "type": "block", "from_user_id": "guid", "from_user_name": "李四", "to_user_id": "guid", "to_user_name": "张三", ... }
+}
+```
+
+> user_id 从 JWT 解析，校验 = assigned_to，upstream_state = in_process
+> downstream_state → blocked
+> 创建 feedback (type=block, is_to_down=false) — 通知 upstream 需介入
+
+---
+
+## 7. Brief 版本（`/briefs/:brief_id/versions`）
+
+### 7.1 列出所有版本
 
 `GET /briefs/:brief_id/versions`
 
-```
+```json
 Response 200
 {
   "versions": [
     {
       "version": 1,
+      "status": "sent",
       "title": "优化首页加载速度",
-      "modified_by": { "id": "guid", "name": "张三" },
+      "modified_by_id": "guid",
+      "modified_by_name": "张三",
       "modified_at": "2026-06-20T22:00:00Z",
       "change_summary": "初始创建",
       "is_upstream_changed": false,
@@ -485,21 +786,23 @@ Response 200
 
 ---
 
-## 4. 流转历史（`/briefs/:brief_id/transfers`）
+## 8. 流转历史（`/briefs/:brief_id/transfers`）
 
-### 4.1 列出流转历史
+### 8.1 列出流转历史
 
 `GET /briefs/:brief_id/transfers`
 
-```
+```json
 Response 200
 {
   "transfers": [
     {
       "id": "guid",
       "brief_version": 1,
-      "from_user": { "id": "guid", "name": "张三" },
-      "to_user": { "id": "guid", "name": "李四" },
+      "from_user_id": "guid",
+      "from_user_name": "张三",
+      "to_user_id": "guid",
+      "to_user_name": "李四",
       "sent_at": "2026-06-20T22:30:00Z",
       "accepted_at": "2026-06-20T22:35:00Z",
       "rejected_at": null,
@@ -509,102 +812,93 @@ Response 200
 }
 ```
 
+> 人名字段从冗余存储直接读取，不需要 JOIN users 表
+
 ---
 
-## 5. Feedback（`/briefs/:brief_id/feedbacks`）
+## 9. Feedback（`/briefs/:brief_id/feedbacks`）
 
-### 5.1 创建 Feedback
+> feedbacks 是 brief 状态变更的记录，也是上下游之间的正式通知。
+> 每个 feedback type（除 progress 外）都跟一个状态变更绑定。
+> direction 用 `is_to_down` boolean 区分：true = upstream→downstream，false = downstream→upstream。
 
-`POST /briefs/:brief_id/feedbacks`
+### 9.1 列出 Feedback
+
+`GET /briefs/:brief_id/feedbacks?type=progress&is_to_down=false`
 
 ```json
-// Request
-{
-  "type": "progress",
-  "content": "已完成接口层优化，预计明天完成前端集成",
-  "attachments": []
-}
-
-// Response 201
-{
-  "feedback": {
-    "id": "guid",
-    "brief_id": "guid",
-    "brief_version": 1,
-    "type": "progress",
-    "content": "...",
-    "from_user": { "id": "guid", "name": "李四" },
-    "created_at": "2026-06-20T23:00:00Z",
-    "confirmed_at": null
-  }
-}
-```
-
-> 权限：brief 的 assigned_to 或 created_by 可创建
-
-### 5.2 列出 Feedback
-
-`GET /briefs/:brief_id/feedbacks?type=progress`
-
-```
 Response 200
 {
   "feedbacks": [
     {
       "id": "guid",
+      "is_to_down": false,
       "type": "progress",
-      "from_user": { "id": "guid", "name": "李四" },
+      "from_user_id": "guid",
+      "from_user_name": "李四",
+      "to_user_id": "guid",
+      "to_user_name": "张三",
       "created_at": "2026-06-20T23:00:00Z"
     }
-  ]
+  ],
+  "next_cursor": null
 }
 ```
 
-> 列表模式：不包含 `content` 和 `attachments`，减少响应大小  
-> 需要完整信息请调用 `GET /feedbacks/:feedback_id`（5.3）
+> 查询参数：
+> - `type` — 过滤类型（submit / block / delegate / open / progress / cancel / suspend / resume / approve / reject_submit / update）
+> - `is_to_down` — 过滤方向
+> - 列表模式：不包含 `content` 和 `attachments`
 
-### 5.3 获取单个 Feedback（详情模式）
+### 9.2 获取单个 Feedback（详情模式）
 
 `GET /feedbacks/:feedback_id`
 
-```
+```json
 Response 200
 {
   "feedback": {
     "id": "guid",
     "brief_id": "guid",
     "brief_version": 1,
+    "is_to_down": false,
     "type": "progress",
     "content": "...",              // 完整内容
     "attachments": [               // 完整附件
       { "name": "截图.png", "url": "/api/v1/files/...", "type": "image" }
     ],
-    "from_user": { "id": "guid", "name": "李四" },
+    "from_user_id": "guid",
+    "from_user_name": "李四",
+    "to_user_id": "guid",
+    "to_user_name": "张三",
+    "is_auto_generated": false,
     "created_at": "2026-06-20T23:00:00Z",
     "confirmed_at": null
   }
 }
 ```
 
+> 大部分状态变更 feedback 通过 upstream-actions / downstream-actions 端点创建。
+> progress 类型可通过此接口查询。
+
 ---
 
-## 6. Brief Chain（`/chains`）
+## 10. Brief Chain（`/chains`）
 
-### 6.1 创建 Chain（即创建根 Brief 时自动创建）
-
-> MVP 简化：创建 root brief 时自动创建 chain，不需要单独创建
-
-### 6.2 列出我的 Chains
+### 10.1 列出我的 Chains
 
 `GET /chains`
 
-```
+```json
 Response 200
 {
   "chains": [
     {
       "chain_id": "guid",
       "title": "Q3 性能优化项目",
+      "owner_id": "guid",
+      "owner_name": "张三",
+      "priority": "p1",
       "root_brief_id": "guid",
       "brief_count": 5,
       "created_at": "2026-06-20T22:00:00Z"
@@ -613,34 +907,44 @@ Response 200
 }
 ```
 
-### 6.3 获取 Chain 详情（含树形结构）
+> owner_id / owner_name / priority 从 brief_chains 表冗余字段直接读取，不需要 JOIN briefs + users
+
+### 10.2 获取 Chain 详情（含树形结构）
 
 `GET /chains/:chain_id`
 
-```
+```json
 Response 200
 {
   "chain": {
     "chain_id": "guid",
     "title": "Q3 性能优化项目",
+    "owner_id": "guid",
+    "owner_name": "张三",
+    "priority": "p1",
     "root_brief": { 
       "brief_id": "guid", 
       "title": "...",
-      "status": "accepted",
+      "upstream_state": "in_process",
+      "downstream_state": "opened",
       "priority": "p1",
-      "created_by": { "id": "guid", "name": "张三" },
-      "assigned_to": { "id": "guid", "name": "李四" },
+      "created_by_id": "guid",
+      "created_by_name": "张三",
+      "assigned_to_id": "guid",
+      "assigned_to_name": "李四",
       "updated_at": "2026-06-20T22:00:00Z"
     },
     "tree": {
       "brief_id": "root_guid",
       "title": "...",
-      "status": "accepted",
+      "upstream_state": "in_process",
+      "downstream_state": "opened",
       "children": [
         {
           "brief_id": "child_guid",
           "title": "...",
-          "status": "done",
+          "upstream_state": "done",
+          "downstream_state": null,
           "children": []
         }
       ]
@@ -649,18 +953,18 @@ Response 200
 }
 ```
 
-> `root_brief` 使用详情模式（包含 `status`, `priority`, `created_by`, `assigned_to`）  
-> `tree` 使用列表模式（只包含 `brief_id`, `title`, `status`, `children`）
+> `root_brief` 使用详情模式
+> `tree` 使用列表模式（只包含 `brief_id`, `title`, `upstream_state`, `downstream_state`, `children`）
 
 ---
 
-## 7. 用户（`/users`）
+## 11. 用户（`/users`）
 
-### 7.1 获取用户列表
+### 11.1 获取用户列表
 
-`GET /users?role=created&status=draft`
+`GET /users?role=created&upstream_state=editing`
 
-```
+```json
 Response 200
 {
   "users": [
@@ -680,11 +984,11 @@ Response 200
 > - 其他用户：显示脱敏版本（email 显示 `***@example.com`，phone 显示 `138****0000`）
 > - Admin：显示完整信息
 
-### 7.2 获取单个用户
+### 11.2 获取单个用户
 
 `GET /users/:user_id`
 
-```
+```json
 Response 200
 { 
   "user": { 
@@ -697,18 +1001,16 @@ Response 200
 }
 ```
 
-> 敏感信息（email/phone）脱敏规则同 7.1
-
 ---
 
-## 8. 文件上传（`/files`）
+## 12. 文件上传（`/files`）
 
 ### 上传流程
 
 1. 客户端调 `POST /files/upload` 上传文件，拿到 `url`
 2. 创建/更新 Brief 或 Feedback 时，将 `url` 填入 `attachments` 数组
 
-### 8.1 上传文件
+### 12.1 上传文件
 
 `POST /files/upload`
 
@@ -729,7 +1031,7 @@ Response 200
 > 服务端将文件存入本地 `uploads/` 目录（MVP）  
 > 未来切换到 S3 时，返回 `https://s3.xxx/bucket/abc123.png`
 
-### 8.2 获取文件
+### 12.2 获取文件
 
 `GET /files/:file_id`
 
@@ -737,28 +1039,75 @@ Response 200
 
 ---
 
-## 附录：状态转移图
+## 附录 A：状态组合转移图
 
 ```
-[draft] ──submit──→ [reviewed] ──send──→ [sent]
-                                           ↓ accept    ↓ reject
-                                      [accepted]    [draft]
-                                           ↓ complete
-                                        [done]
+(editing, null) ──send──→ (sent, null)
+                           ↓ accept                ↓ reject
+                    (in_process, opened)       → (editing, null)
 
-[draft/sent/accepted] ──cancel──→ [cancelled]
-[accepted] ──blocked feedback──→ [blocked] ──resolve──→ [accepted]
+(in_process, opened) ──downstream 自由──→ (in_process, delegated)
+                                       → (in_process, blocked)
+                                       → (in_process, submitted)
+
+(in_process, submitted) ──approve──→ (done, null)
+(in_process, submitted) ──reject_submit──→ (in_process, opened)
+(in_process, *) ──update──→ (in_process, opened)    // 强制下游重开
+(in_process, *) ──cancel──→ (cancelled, preserved)   // downstream_state 保留
+(in_process, *) ──suspend──→ (suspended, preserved)  // downstream_state 保留
+(suspended, preserved) ──resume──→ (in_process, preserved)  // 原样恢复
 ```
 
 ---
 
-## 附录：MVP 不做的功能
+## 附录 B：动作与端点对照表
+
+| 端点分组 | URL | action | upstream_state 变更 | downstream_state 变更 | 创建的 feedback type |
+|---------|-----|--------|:-------------------:|:---------------------:|---------------------|
+| **Editing** | `POST /briefs/:id/editing` | patch | 不变 | 不变 | — |
+| | | review | 不变 | 不变 | — |
+| **Transfer** | `POST /briefs/:id/transfer` | send | → sent | 不变 | — (transfer_history) |
+| | | accept | → in_process | → opened | — (transfer_history) |
+| | | reject | → editing | → null | — (transfer_history) |
+| **Upstream-action** | `POST /briefs/:id/upstream-actions` | cancel | → cancelled | 保留 | cancel |
+| | | suspend | → suspended | 保留 | suspend |
+| | | resume | → in_process | 保留 | resume |
+| | | approve | → done | → null | approve |
+| | | reject_submit | 不变 | → opened | reject_submit |
+| | | update | 不变 | → opened | update |
+| **Downstream-action** | `POST /briefs/:id/downstream-actions` | process | 不变 | 不变 | progress |
+| | | submit | 不变 | → submitted | submit |
+| | | open | 不变 | → opened | open |
+| | | delegate | 不变 | → delegated | delegate |
+| | | block | 不变 | → blocked | block |
+
+---
+
+## 附录 C：冗余字段对照表
+
+| 表 | 冗余字段 | 来源 | 写入时机 |
+|---|---------|------|---------|
+| briefs | created_by_name | users.name | 创建 brief 时 |
+| briefs | assigned_to_name | users.name | send / accept / 临时用户升级时 |
+| feedbacks | from_user_name | users.name | 创建 feedback 时 |
+| feedbacks | to_user_name | users.name | 创建 feedback 时 |
+| brief_transfer_history | from_user_name | users.name | send 时 |
+| brief_transfer_history | to_user_name | users.name | send 时 |
+| brief_chains | owner_id / owner_name | root_brief.created_by + users.name | 创建 chain 时 |
+| brief_chains | priority | root_brief.priority | root_brief priority 变更时同步 |
+
+> 合约语义：名字是操作时的快照（"当时签合约的人叫什么"），不是实时值。用户改名不自动同步，除非主动触发。
+
+---
+
+## 附录 D：MVP 不做的功能
 
 - ❌ Arbiter LLM 自动审查（人工替代）
-- ❌ 内部 Kanban / 工作状态管理
+- ❌ Task / Kanban 子系统（后续设计）
 - ❌ 跨系统互操作（bc:// 协议）
 - ❌ 可配置工作流模板
 - ❌ 微信/三方登录（先邮箱/手机注册）
 - ❌ 细粒度权限（先 created_by 全权限）
 - ❌ 手机号验证码登录（MVP 只支持密码登录）
 - ❌ 邀请链接验证码（MVP 只做信任场景，详见 05-invite-link-design.md）
+- ❌ feedbacks 中 upstream→downstream 类型的 Arbiter 审查（MVP 不审查）

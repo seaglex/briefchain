@@ -12,14 +12,13 @@ from briefchain.api.schemas.auth import AuthResponse, LoginRequest, RegisterRequ
 from briefchain.api.schemas.users import UserListResponse, UserResponse, serialize_user
 from briefchain.api.security import create_access_token, get_password_hash, verify_password
 from briefchain.models import Brief, User
-from briefchain.models.enums import BriefStatus, UserType
+from briefchain.models.enums import BriefUpstreamState, UserType
 
-_ACTIVE_BRIEF_STATUSES = {
-    BriefStatus.DRAFT,
-    BriefStatus.REVIEWED,
-    BriefStatus.SENT,
-    BriefStatus.ACCEPTED,
-    BriefStatus.BLOCKED,
+_ACTIVE_BRIEF_UPSTREAM_STATES = {
+    BriefUpstreamState.EDITING,
+    BriefUpstreamState.SENT,
+    BriefUpstreamState.IN_PROCESS,
+    BriefUpstreamState.SUSPENDED,
 }
 
 
@@ -29,12 +28,16 @@ def _migrate_active_briefs(
     registered_user_id: UUID,
 ) -> None:
     """Reassign all non-done/non-cancelled briefs from a temporary user to a registered user."""
-    active_briefs = session.execute(
-        select(Brief).where(
-            Brief.assigned_to == temporary_user_id,
-            Brief.status.in_(_ACTIVE_BRIEF_STATUSES),
+    active_briefs = (
+        session.execute(
+            select(Brief).where(
+                Brief.assigned_to == temporary_user_id,
+                Brief.upstream_state.in_(_ACTIVE_BRIEF_UPSTREAM_STATES),
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     for brief in active_briefs:
         brief.assigned_to = registered_user_id

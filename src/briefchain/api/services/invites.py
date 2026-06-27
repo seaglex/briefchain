@@ -142,9 +142,9 @@ def get_invite_by_token(session: Session, token: str) -> BriefInvite:
             status_code=410,
         )
 
-    invite = session.execute(
-        select(BriefInvite).where(BriefInvite.nonce == nonce)
-    ).scalars().first()
+    invite = (
+        session.execute(select(BriefInvite).where(BriefInvite.nonce == nonce)).scalars().first()
+    )
 
     if invite is None:
         raise APIError(
@@ -221,12 +221,16 @@ def invalidate_invite_for_brief(
         The invalidated invite record, or None if no active invite exists.
     """
     now = _now()
-    invite = session.execute(
-        select(BriefInvite).where(
-            BriefInvite.brief_id == brief_id,
-            BriefInvite.invalidated_at.is_(None),
+    invite = (
+        session.execute(
+            select(BriefInvite).where(
+                BriefInvite.brief_id == brief_id,
+                BriefInvite.invalidated_at.is_(None),
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
 
     if invite is not None:
         invite.invalidated_at = now
@@ -242,12 +246,16 @@ def invalidate_invites_for_temporary_user(
 ) -> None:
     """Mark all valid invites for a temporary user as invalidated and record final user."""
     now = _now()
-    invites = session.execute(
-        select(BriefInvite).where(
-            BriefInvite.temporary_user_id == temporary_user_id,
-            BriefInvite.invalidated_at.is_(None),
+    invites = (
+        session.execute(
+            select(BriefInvite).where(
+                BriefInvite.temporary_user_id == temporary_user_id,
+                BriefInvite.invalidated_at.is_(None),
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     for invite in invites:
         invite.invalidated_at = now
@@ -256,12 +264,16 @@ def invalidate_invites_for_temporary_user(
 
 def get_invite_by_brief_id(session: Session, brief_id: UUID) -> BriefInvite | None:
     """Return the active invite for a brief, or None if not found."""
-    return session.execute(
-        select(BriefInvite).where(
-            BriefInvite.brief_id == brief_id,
-            BriefInvite.invalidated_at.is_(None),
+    return (
+        session.execute(
+            select(BriefInvite).where(
+                BriefInvite.brief_id == brief_id,
+                BriefInvite.invalidated_at.is_(None),
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
 
 
 def build_invite_url(token: str) -> str:

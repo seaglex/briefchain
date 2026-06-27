@@ -5,7 +5,7 @@ The system SHALL provide a page at `/briefs/new` that allows an authenticated us
 
 #### Scenario: Create brief page loads
 - **WHEN** an authenticated user navigates to `/briefs/new`
-- **THEN** the page displays a form with fields for title, content, priority, and estimated man days
+- **THEN** the page displays a form with fields for title, content, priority, estimated man days, and expected completion time
 
 ### Requirement: Create brief form validates required fields
 The system SHALL validate that title and content are non-empty before submission.
@@ -22,8 +22,8 @@ The system SHALL validate that title and content are non-empty before submission
 The system SHALL call `POST /api/v1/briefs` to create a new Brief.
 
 #### Scenario: Successful creation
-- **WHEN** the user enters valid title, content, priority, and estimated man days and clicks "创建"
-- **THEN** the system calls `POST /api/v1/briefs` and redirects the user to the new Brief's detail page
+- **WHEN** the user enters valid title, content, priority, estimated man days, and optional expected completion time and clicks "创建"
+- **THEN** the system calls `POST /api/v1/briefs`, receives a brief with `upstream_state` "editing", `downstream_state` null, and `current_version` null, and redirects the user to the new Brief's detail page
 
 #### Scenario: Failed creation
 - **WHEN** the backend returns an error during creation

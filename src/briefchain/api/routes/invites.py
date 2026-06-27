@@ -3,26 +3,23 @@
 from fastapi import APIRouter
 
 from briefchain.api.dependencies import InviteDep, SessionDep
-from briefchain.api.exceptions import APIError
-from briefchain.api.schemas.briefs import BriefLifecycleResponse
-from briefchain.api.schemas.feedbacks import FeedbackCreateRequest, FeedbackDetail
+from briefchain.api.schemas.briefs import BriefDetail, BriefLifecycleResponse
 from briefchain.api.schemas.invites import (
     AcceptInviteRequest,
-    BlockedInviteRequest,
-    DoneInviteRequest,
-    InviteViewResponse,
+    BlockInviteRequest,
+    DelegateInviteRequest,
+    OpenInviteRequest,
     RejectInviteRequest,
+    SubmitInviteRequest,
 )
 from briefchain.api.services import briefs as brief_service
-from briefchain.api.services import feedbacks as feedback_service
 from briefchain.api.services import invites as invite_service
-from briefchain.models import Brief, BriefInvite, User
-from briefchain.models.enums import BriefStatus, FeedbackType
+from briefchain.models import User
 
 router = APIRouter(prefix="/invites", tags=["invites"])
 
 
-def _serialize_invite_metadata(invite: BriefInvite, sender_name: str) -> dict:
+def _serialize_invite_metadata(invite: InviteDep, sender_name: str) -> dict:
     """Return public invite metadata for responses."""
     return {
         "name": invite.name,
@@ -32,19 +29,19 @@ def _serialize_invite_metadata(invite: BriefInvite, sender_name: str) -> dict:
     }
 
 
-@router.get("/{token}", response_model=InviteViewResponse)
+@router.get("/{token}")
 def view_invite(
     invite: InviteDep,
     session: SessionDep,
-) -> InviteViewResponse:
+) -> dict:
     """View an invite and the associated brief details."""
     sender = session.get(User, invite.from_user)
     sender_name = sender.name if sender is not None else ""
     brief = brief_service.get_brief_detail(session, invite.brief_id)
-    return InviteViewResponse(
-        invite=_serialize_invite_metadata(invite, sender_name),
-        brief=brief,
-    )
+    return {
+        "invite": _serialize_invite_metadata(invite, sender_name),
+        "brief": brief,
+    }
 
 
 @router.post("/{token}/accept", response_model=BriefLifecycleResponse)
@@ -81,60 +78,64 @@ def reject_invite(
     )
 
 
-@router.post("/{token}/blocked", response_model=FeedbackDetail)
+@router.post("/{token}/submit", response_model=BriefDetail)
+def submit_invite(
+    invite: InviteDep,
+    session: SessionDep,
+    body: SubmitInviteRequest,
+) -> dict:
+    """Submit completion of an accepted brief using an invite token."""
+    return brief_service.downstream_submit(
+        session,
+        invite.brief_id,
+        invite.temporary_user_id,
+        body.content,
+        body.attachments,
+    )
+
+
+@router.post("/{token}/block", response_model=BriefDetail)
 def block_invite(
     invite: InviteDep,
     session: SessionDep,
-    body: BlockedInviteRequest,
-) -> FeedbackDetail:
-    """Mark an accepted brief as blocked using an invite token."""
-    brief = session.get(Brief, invite.brief_id)
-    if brief is None:
-        raise APIError(
-            code="BRIEF_NOT_FOUND",
-            message="Brief not found",
-            status_code=404,
-        )
-    if brief.status != BriefStatus.ACCEPTED:
-        raise APIError(
-            code="INVALID_STATUS",
-            message="Only accepted briefs can be marked as blocked",
-            status_code=409,
-        )
-
-    brief.status = BriefStatus.BLOCKED
-    session.add(brief)
-
-    feedback = feedback_service.create_feedback(
+    body: BlockInviteRequest,
+) -> dict:
+    """Mark an in-process brief as blocked using an invite token."""
+    return brief_service.downstream_block(
         session,
         invite.brief_id,
         invite.temporary_user_id,
-        FeedbackCreateRequest(
-            type=FeedbackType.BLOCKED,
-            content=body.reason,
-            attachments=[],
-        ),
+        body.reason,
+        body.attachments,
     )
-    return feedback
 
 
-@router.post("/{token}/done", response_model=FeedbackDetail)
-def done_invite(
+@router.post("/{token}/open", response_model=BriefDetail)
+def open_invite(
     invite: InviteDep,
     session: SessionDep,
-    body: DoneInviteRequest,
-) -> FeedbackDetail:
-    """Mark an accepted brief as done using an invite token."""
-    brief_service.complete_brief(session, invite.brief_id, invite.temporary_user_id)
-
-    feedback = feedback_service.create_feedback(
+    body: OpenInviteRequest,
+) -> dict:
+    """Reopen a brief using an invite token."""
+    return brief_service.downstream_open(
         session,
         invite.brief_id,
         invite.temporary_user_id,
-        FeedbackCreateRequest(
-            type=FeedbackType.COMPLETION,
-            content=body.result,
-            attachments=[],
-        ),
+        body.reason,
     )
-    return feedback
+
+
+@router.post("/{token}/delegate", response_model=BriefDetail)
+def delegate_invite(
+    invite: InviteDep,
+    session: SessionDep,
+    body: DelegateInviteRequest | None = None,
+) -> dict:
+    """Mark a brief as delegated using an invite token."""
+    content = body.content if body is not None else None
+    return brief_service.downstream_delegate(
+        session,
+        invite.brief_id,
+        invite.temporary_user_id,
+        content,
+    )

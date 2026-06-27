@@ -21,7 +21,13 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from briefchain.models.base import Base, TimestampMixin
-from briefchain.models.enums import ArbiterReviewStatus, BriefPriority, BriefStatus
+from briefchain.models.enums import (
+    ArbiterReviewStatus,
+    BriefDownstreamState,
+    BriefPriority,
+    BriefUpstreamState,
+    BriefVersionStatus,
+)
 
 if TYPE_CHECKING:
     from briefchain.models.feedback import Feedback
@@ -49,15 +55,49 @@ class Brief(Base, TimestampMixin):
     )
     is_root: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
-    current_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    status: Mapped[BriefStatus] = mapped_column(
+    current_version: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+        default=None,
+    )
+
+    upstream_state: Mapped[BriefUpstreamState] = mapped_column(
         String(20),
         nullable=False,
-        default=BriefStatus.DRAFT,
+        default=BriefUpstreamState.EDITING,
+    )
+    downstream_state: Mapped[BriefDownstreamState | None] = mapped_column(
+        String(20),
+        nullable=True,
+        default=None,
+    )
+
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    priority: Mapped[BriefPriority] = mapped_column(
+        String(10),
+        nullable=False,
+        default=BriefPriority.P2,
+    )
+    expected_completion_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     created_by: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    created_by_name: Mapped[str] = mapped_column(String(255), nullable=False)
     assigned_to: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
+    assigned_to_name: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    status_changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    status_changed_by: Mapped[UUID] = mapped_column(nullable=False)
+    status_changed_by_name: Mapped[str] = mapped_column(String(255), nullable=False)
 
     parent: Mapped[Brief | None] = relationship(
         "Brief",
@@ -115,9 +155,19 @@ class BriefVersion(Base, TimestampMixin):
     )
     version: Mapped[int] = mapped_column(Integer, primary_key=True)
 
+    status: Mapped[BriefVersionStatus] = mapped_column(
+        String(20),
+        nullable=False,
+        default=BriefVersionStatus.DRAFT,
+    )
+
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    attachments: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    attachments: Mapped[list[dict]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
 
     priority: Mapped[BriefPriority] = mapped_column(
         String(10),
@@ -126,6 +176,15 @@ class BriefVersion(Base, TimestampMixin):
     )
     estimated_man_days: Mapped[Decimal | None] = mapped_column(
         Numeric(5, 2),
+        nullable=True,
+    )
+    expected_completion_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    arbiter_review_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("brief_arbiter_reviews.id"),
         nullable=True,
     )
 
@@ -141,6 +200,7 @@ class BriefVersion(Base, TimestampMixin):
     )
 
     modified_by: Mapped[UUID] = mapped_column(nullable=False)
+    modified_by_name: Mapped[str] = mapped_column(String(255), nullable=False)
     modified_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -152,6 +212,11 @@ class BriefVersion(Base, TimestampMixin):
         "Brief",
         lazy="raise",
         back_populates="versions",
+    )
+    arbiter_review: Mapped[BriefArbiterReview | None] = relationship(
+        "BriefArbiterReview",
+        lazy="raise",
+        foreign_keys=[arbiter_review_id],
     )
 
 
@@ -174,7 +239,9 @@ class BriefTransferHistory(Base, TimestampMixin):
     )
 
     from_user: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    from_user_name: Mapped[str] = mapped_column(String(255), nullable=False)
     to_user: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    to_user_name: Mapped[str] = mapped_column(String(255), nullable=False)
 
     sent_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -199,7 +266,7 @@ class BriefTransferHistory(Base, TimestampMixin):
     arbiter_review: Mapped[BriefArbiterReview | None] = relationship(
         "BriefArbiterReview",
         lazy="raise",
-        back_populates="transfers",
+        foreign_keys=[arbiter_review_id],
     )
 
 
@@ -213,6 +280,14 @@ class BriefChain(Base, TimestampMixin):
         primary_key=True,
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    owner_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    owner_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    priority: Mapped[BriefPriority] = mapped_column(
+        String(10),
+        nullable=False,
+        default=BriefPriority.P2,
+    )
 
     root_brief: Mapped[Brief] = relationship(
         "Brief",

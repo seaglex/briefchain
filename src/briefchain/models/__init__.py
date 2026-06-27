@@ -9,8 +9,10 @@ from briefchain.models.brief import (
 )
 from briefchain.models.enums import (
     ArbiterReviewStatus,
+    BriefDownstreamState,
     BriefPriority,
-    BriefStatus,
+    BriefUpstreamState,
+    BriefVersionStatus,
     FeedbackType,
     UserType,
 )
@@ -23,11 +25,13 @@ __all__ = [
     "Brief",
     "BriefArbiterReview",
     "BriefChain",
+    "BriefDownstreamState",
     "BriefInvite",
     "BriefPriority",
-    "BriefStatus",
     "BriefTransferHistory",
+    "BriefUpstreamState",
     "BriefVersion",
+    "BriefVersionStatus",
     "Feedback",
     "FeedbackArbiterReview",
     "FeedbackType",

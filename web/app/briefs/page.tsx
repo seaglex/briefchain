@@ -7,10 +7,11 @@ import Sidebar from "@/components/Sidebar";
 interface BriefListItem {
   brief_id: string;
   title: string;
-  status: string;
+  upstream_state: string;
+  downstream_state: string | null;
   priority: string;
-  created_by: { id: string; name: string };
-  assigned_to: { id: string; name: string } | null;
+  created_by_name: string;
+  assigned_to_name: string | null;
   updated_at: string;
 }
 
@@ -22,16 +23,19 @@ interface BriefListResponse {
 export default async function BriefListPage({
   searchParams,
 }: {
-  searchParams: Promise<{ role?: string; status?: string; priority?: string }>;
+  searchParams: Promise<{ role?: string; upstream_state?: string; downstream_state?: string; priority?: string }>;
 }) {
-  const { role: rawRole, status, priority } = await searchParams;
+  const { role: rawRole, upstream_state, downstream_state, priority } = await searchParams;
   const role = rawRole === "created" ? "created" : "assigned";
+
+  const queryParts = [`role=${role}`];
+  if (upstream_state) queryParts.push(`upstream_state=${upstream_state}`);
+  if (downstream_state) queryParts.push(`downstream_state=${downstream_state}`);
+  queryParts.push("page_size=100");
 
   const [userResult, briefsResult] = await Promise.all([
     getCurrentUser(),
-    serverFetch<BriefListResponse>(
-      `/api/v1/briefs?role=${role}${status ? `&status=${status}` : ""}&page_size=100`
-    ),
+    serverFetch<BriefListResponse>(`/api/v1/briefs?${queryParts.join("&")}`),
   ]);
 
   if (!userResult.ok) {
@@ -43,18 +47,27 @@ export default async function BriefListPage({
     briefs = briefs.filter((b) => b.priority === priority);
   }
 
-  const statusClass = (statusValue: string): string => {
+  const upstreamStateClass = (stateValue: string): string => {
     const map: Record<string, string> = {
-      draft: "badge-draft",
+      editing: "badge-draft",
       reviewed: "badge-reviewed",
       sent: "badge-sent",
-      accepted: "badge-accepted",
-      done: "badge-done",
-      blocked: "badge-blocked",
+      in_process: "badge-accepted",
+      suspended: "badge-blocked",
       cancelled: "badge-cancelled",
-      rejected: "badge-rejected",
+      done: "badge-done",
     };
-    return map[statusValue] || "badge-draft";
+    return map[stateValue] || "badge-draft";
+  };
+
+  const downstreamStateClass = (stateValue: string): string => {
+    const map: Record<string, string> = {
+      opened: "badge-accepted",
+      submitted: "badge-reviewed",
+      delegated: "badge-sent",
+      blocked: "badge-blocked",
+    };
+    return map[stateValue] || "badge-accepted";
   };
 
   const priorityClass = (p: string): string => {
@@ -106,11 +119,16 @@ export default async function BriefListPage({
                     <span className={`badge ${priorityClass(brief.priority)}`}>
                       {brief.priority.toUpperCase()}
                     </span>
-                    <span className={`badge ${statusClass(brief.status)}`}>
-                      {brief.status}
+                    <span className={`badge ${upstreamStateClass(brief.upstream_state)}`}>
+                      {brief.upstream_state}
                     </span>
+                    {brief.downstream_state && (
+                      <span className={`badge ${downstreamStateClass(brief.downstream_state)}`}>
+                        {brief.downstream_state}
+                      </span>
+                    )}
                     <span>
-                      assigned: {brief.assigned_to?.name || "--"}
+                      assigned: {brief.assigned_to_name || "--"}
                     </span>
                   </div>
                 </div>

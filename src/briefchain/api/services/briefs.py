@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -17,22 +18,32 @@ from briefchain.api.schemas.briefs import (
     BriefDetail,
     BriefLifecycleResponse,
     BriefListItem,
+    BriefPatchRequest,
+    BriefReviewRequest,
     BriefTransferResponse,
-    BriefUpdateRequest,
-    BriefVersionDetail,
-    BriefVersionListItem,
+    BriefUpdateActionRequest,
     SendBriefRequest,
-    UserRef,
+    UserSnapshot,
 )
 from briefchain.models import (
     Brief,
+    BriefArbiterReview,
     BriefChain,
     BriefInvite,
     BriefTransferHistory,
     BriefVersion,
+    Feedback,
     User,
 )
-from briefchain.models.enums import BriefPriority, BriefStatus, UserType
+from briefchain.models.enums import (
+    ArbiterReviewStatus,
+    BriefDownstreamState,
+    BriefPriority,
+    BriefUpstreamState,
+    BriefVersionStatus,
+    FeedbackType,
+    UserType,
+)
 
 
 def _now() -> datetime:
@@ -48,50 +59,165 @@ def _decode_cursor(cursor: str) -> dict[str, Any]:
     return json.loads(base64.urlsafe_b64decode(cursor + "=" * padding).decode())
 
 
-def _load_user_map(session: Session, user_ids: set[UUID]) -> dict[UUID, User]:
-    if not user_ids:
-        return {}
-    users = session.execute(select(User).where(User.id.in_(list(user_ids)))).scalars().all()
-    return {user.id: user for user in users}
-
-
-def _user_ref(user: User | None) -> UserRef | None:
-    if user is None:
+def _parse_iso(value: str | None) -> datetime | None:
+    if value is None:
         return None
-    return UserRef(id=user.id, name=user.name)
+    # Handle trailing Z for UTC.
+    normalized = value.replace("Z", "+00:00")
+    return datetime.fromisoformat(normalized)
 
 
 def _format_time(value: datetime) -> str:
     return value.isoformat()
 
 
+def _load_user(session: Session, user_id: UUID) -> User:
+    user = session.get(User, user_id)
+    if user is None:
+        raise APIError(
+            code="USER_NOT_FOUND",
+            message="User not found",
+            status_code=404,
+        )
+    return user
+
+
+def _user_snapshot(user: User | None) -> UserSnapshot | None:
+    if user is None:
+        return None
+    return UserSnapshot(id=user.id, name=user.name)
+
+
+def _current_version(brief: Brief) -> BriefVersion | None:
+    """Return the version matching current_version, or the latest version if none sent."""
+    if not brief.versions:
+        return None
+    if brief.current_version is not None:
+        for version in brief.versions:
+            if version.version == brief.current_version:
+                return version
+    return brief.versions[-1]
+
+
+def _latest_draft_version(brief: Brief) -> BriefVersion | None:
+    """Return the most recent draft version, if any."""
+    for version in reversed(brief.versions):
+        if version.status == BriefVersionStatus.DRAFT:
+            return version
+    return None
+
+
+def _max_version(brief: Brief) -> int:
+    return max((v.version for v in brief.versions), default=0)
+
+
+def _sync_brief_from_version(
+    session: Session,
+    brief: Brief,
+    version: BriefVersion,
+    state_changed_by: UUID | None = None,
+) -> None:
+    """Synchronize denormalized brief fields from a sent version."""
+    brief.title = version.title
+    brief.priority = version.priority
+    brief.expected_completion_at = version.expected_completion_at
+    if state_changed_by is not None:
+        user = _load_user(session, state_changed_by)
+        brief.status_changed_by = state_changed_by
+        brief.status_changed_by_name = user.name
+        brief.status_changed_at = _now()
+
+
+def _set_state_changed(session: Session, brief: Brief, user_id: UUID) -> None:
+    user = _load_user(session, user_id)
+    brief.status_changed_by = user_id
+    brief.status_changed_by_name = user.name
+    brief.status_changed_at = _now()
+
+
+def _create_feedback(
+    session: Session,
+    brief: Brief,
+    from_user_id: UUID,
+    to_user_id: UUID,
+    feedback_type: FeedbackType,
+    content: str,
+    attachments: list[dict],
+    is_to_down: bool,
+) -> Feedback:
+    """Create a feedback record with name snapshots."""
+    from_user = _load_user(session, from_user_id)
+    to_user = _load_user(session, to_user_id)
+    feedback = Feedback(
+        id=uuid4(),
+        brief_id=brief.brief_id,
+        brief_version=brief.current_version if brief.current_version is not None else 1,
+        is_to_down=is_to_down,
+        type=feedback_type,
+        content=content,
+        attachments=attachments,
+        from_user=from_user_id,
+        from_user_name=from_user.name,
+        to_user=to_user_id,
+        to_user_name=to_user.name,
+        is_auto_generated=False,
+        confirmed_at=None,
+    )
+    session.add(feedback)
+    return feedback
+
+
 def _serialize_brief(
     brief: Brief,
-    users: dict[UUID, User],
     version: BriefVersion | None = None,
     detail: bool = False,
 ) -> BriefListItem | BriefDetail:
-    creator = users.get(brief.created_by)
-    assignee = users.get(brief.assigned_to) if brief.assigned_to else None
+    if version is None:
+        version = _current_version(brief)
+
+    title = brief.title
+    priority = brief.priority
+    expected_completion = brief.expected_completion_at
+    estimated = None
+    content = ""
+    attachments: list[dict] = []
+    if version is not None:
+        content = version.content
+        attachments = version.attachments
+        estimated = version.estimated_man_days
+        if brief.current_version is None:
+            # Before any version is sent, denormalized fields come from v1.
+            title = version.title
+            priority = version.priority
+            expected_completion = version.expected_completion_at
 
     current_version = brief.current_version
-    if version is None:
-        version = next(
-            (v for v in brief.versions if v.version == current_version),
-            brief.versions[-1] if brief.versions else None,
-        )
+    version_number = version.version if version else (current_version or 1)
+    is_current = (
+        version is not None and current_version is not None and version.version == current_version
+    )
 
-    title = version.title if version else ""
-    priority = version.priority if version else BriefPriority.P2
-    estimated = version.estimated_man_days if version else None
+    # Determine current version status without triggering a lazy load of brief.versions.
+    # When current_version is None the requested version is the effective current version;
+    # otherwise only use its status if it matches the brief's current_version.
+    current_version_status = None
+    if version is not None:
+        if current_version is None or version.version == current_version:
+            current_version_status = version.status
 
     base = BriefListItem(
         brief_id=brief.brief_id,
         title=title,
-        status=brief.status,
+        upstream_state=brief.upstream_state,
+        downstream_state=brief.downstream_state,
         priority=priority,
-        created_by=_user_ref(creator),
-        assigned_to=_user_ref(assignee),
+        created_by_id=brief.created_by,
+        created_by_name=brief.created_by_name,
+        assigned_to_id=brief.assigned_to,
+        assigned_to_name=brief.assigned_to_name,
+        status_changed_by_id=brief.status_changed_by,
+        status_changed_by_name=brief.status_changed_by_name,
+        status_changed_at=_format_time(brief.status_changed_at),
         updated_at=_format_time(brief.updated_at),
     )
 
@@ -102,30 +228,52 @@ def _serialize_brief(
         **base.model_dump(),
         root_id=brief.root_id,
         parent_id=brief.parent_id,
-        content=version.content if version else "",
-        attachments=version.attachments if version else [],
+        content=content,
+        attachments=attachments,
         current_version=current_version,
-        version=version.version if version else current_version,
-        is_current=(version is not None and version.version == current_version),
-        estimated_man_days=estimated,
+        current_version_status=current_version_status,
+        version=version_number,
+        is_current=is_current,
+        estimated_man_days=float(estimated) if estimated is not None else None,
+        expected_completion_at=_format_time(expected_completion) if expected_completion else None,
         created_at=_format_time(brief.created_at),
     )
 
 
 def _serialize_transfer(
     transfer: BriefTransferHistory,
-    users: dict[UUID, User],
 ) -> BriefTransferResponse:
     return BriefTransferResponse(
         id=transfer.id,
         brief_version=transfer.brief_version,
-        from_user=_user_ref(users.get(transfer.from_user)),
-        to_user=_user_ref(users.get(transfer.to_user)),
+        from_user_id=transfer.from_user,
+        from_user_name=transfer.from_user_name,
+        to_user_id=transfer.to_user,
+        to_user_name=transfer.to_user_name,
         sent_at=_format_time(transfer.sent_at),
         accepted_at=_format_time(transfer.accepted_at) if transfer.accepted_at else None,
         rejected_at=_format_time(transfer.rejected_at) if transfer.rejected_at else None,
         rejection_reason=transfer.rejection_reason,
     )
+
+
+def _serialize_feedback(feedback: Feedback) -> dict:
+    return {
+        "id": str(feedback.id),
+        "brief_id": str(feedback.brief_id),
+        "brief_version": feedback.brief_version,
+        "is_to_down": feedback.is_to_down,
+        "type": str(feedback.type),
+        "content": feedback.content,
+        "attachments": feedback.attachments,
+        "from_user_id": str(feedback.from_user),
+        "from_user_name": feedback.from_user_name,
+        "to_user_id": str(feedback.to_user),
+        "to_user_name": feedback.to_user_name,
+        "is_auto_generated": feedback.is_auto_generated,
+        "confirmed_at": _format_time(feedback.confirmed_at) if feedback.confirmed_at else None,
+        "created_at": _format_time(feedback.created_at),
+    }
 
 
 def _require_brief(session: Session, brief_id: UUID) -> Brief:
@@ -192,15 +340,26 @@ def create_brief(session: Session, user_id: UUID, request: BriefCreateRequest) -
     """Create a new root or child brief."""
     now = _now()
     brief_id = uuid4()
+    creator = _load_user(session, user_id)
+
     brief = Brief(
         brief_id=brief_id,
         root_id=brief_id,
         parent_id=request.parent_id,
         is_root=request.parent_id is None,
-        status=BriefStatus.DRAFT,
-        current_version=1,
+        current_version=None,
+        upstream_state=BriefUpstreamState.EDITING,
+        downstream_state=None,
+        title=request.title,
+        priority=request.priority,
+        expected_completion_at=_parse_iso(request.expected_completion_at),
         created_by=user_id,
+        created_by_name=creator.name,
         assigned_to=None,
+        assigned_to_name=None,
+        status_changed_by=user_id,
+        status_changed_by_name=creator.name,
+        status_changed_at=now,
     )
     session.add(brief)
 
@@ -211,35 +370,49 @@ def create_brief(session: Session, user_id: UUID, request: BriefCreateRequest) -
     version = BriefVersion(
         brief_id=brief.brief_id,
         version=1,
+        status=BriefVersionStatus.DRAFT,
         title=request.title,
         content=request.content,
         attachments=request.attachments,
         priority=request.priority,
-        estimated_man_days=request.estimated_man_days,
+        estimated_man_days=(
+            Decimal(str(request.estimated_man_days))
+            if request.estimated_man_days is not None
+            else None
+        ),
+        expected_completion_at=_parse_iso(request.expected_completion_at),
+        arbiter_review_id=None,
         is_upstream_changed=False,
         revision_reason="initial",
         modified_by=user_id,
+        modified_by_name=creator.name,
         modified_at=now,
         change_summary="Initial version",
     )
     session.add(version)
 
     if brief.parent_id is None:
-        chain = BriefChain(chain_id=brief.brief_id, title=request.title)
+        chain = BriefChain(
+            chain_id=brief.brief_id,
+            title=request.title,
+            owner_id=user_id,
+            owner_name=creator.name,
+            priority=request.priority,
+        )
         session.add(chain)
 
     session.commit()
     session.refresh(brief)
 
-    users = _load_user_map(session, {brief.created_by, brief.assigned_to} - {None})
-    return _serialize_brief(brief, users, version=version, detail=True)
+    return _serialize_brief(brief, version=version, detail=True)
 
 
 def list_briefs(
     session: Session,
     user_id: UUID,
     role: str = "all",
-    status: BriefStatus | None = None,
+    upstream_state: BriefUpstreamState | None = None,
+    downstream_state: BriefDownstreamState | None = None,
     root_id: UUID | None = None,
     page_cursor: str | None = None,
     page_size: int = 20,
@@ -260,8 +433,10 @@ def list_briefs(
             )
         )
 
-    if status is not None:
-        conditions.append(Brief.status == status)
+    if upstream_state is not None:
+        conditions.append(Brief.upstream_state == upstream_state)
+    if downstream_state is not None:
+        conditions.append(Brief.downstream_state == downstream_state)
     if root_id is not None:
         conditions.append(Brief.root_id == root_id)
 
@@ -299,11 +474,7 @@ def list_briefs(
     )
     briefs = session.execute(stmt).scalars().all()
 
-    user_ids = {brief.created_by for brief in briefs}
-    user_ids.update({brief.assigned_to for brief in briefs if brief.assigned_to})
-    users = _load_user_map(session, user_ids)
-
-    items = [_serialize_brief(brief, users, detail=False) for brief in briefs]
+    items = [_serialize_brief(brief, detail=False) for brief in briefs]
 
     next_cursor = None
     if len(briefs) == page_size:
@@ -321,118 +492,175 @@ def list_briefs(
     }
 
 
-def get_brief_detail(session: Session, brief_id: UUID) -> BriefDetail:
-    """Return a brief with its latest version content."""
+def get_brief_detail(
+    session: Session,
+    brief_id: UUID,
+    version_number: int | None = None,
+) -> BriefDetail:
+    """Return a brief with its latest or requested version content."""
     brief = _load_brief_with_versions(session, brief_id)
-    users = _load_user_map(session, {brief.created_by, brief.assigned_to} - {None})
-    return _serialize_brief(brief, users, detail=True)
+    version = None
+    if version_number is not None:
+        version = next((v for v in brief.versions if v.version == version_number), None)
+        if version is None:
+            raise APIError(
+                code="VERSION_NOT_FOUND",
+                message="Version not found",
+                status_code=404,
+            )
+
+    return _serialize_brief(brief, version=version, detail=True)
 
 
-def get_brief_version(session: Session, brief_id: UUID, version_number: int) -> BriefVersionDetail:
-    """Return a specific version of a brief."""
-    brief = _load_brief_with_versions(session, brief_id)
-    version = next((v for v in brief.versions if v.version == version_number), None)
-    if version is None:
-        raise APIError(
-            code="VERSION_NOT_FOUND",
-            message="Version not found",
-            status_code=404,
-        )
-    users = _load_user_map(
-        session, {brief.created_by, brief.assigned_to, version.modified_by} - {None}
-    )
-    return _serialize_brief(brief, users, version=version, detail=True)
-
-
-def list_brief_versions(session: Session, brief_id: UUID) -> list[BriefVersionListItem]:
+def list_brief_versions(session: Session, brief_id: UUID) -> list[dict]:
     """Return all versions of a brief."""
     brief = _load_brief_with_versions(session, brief_id)
-    user_ids = {version.modified_by for version in brief.versions}
-    users = _load_user_map(session, user_ids)
 
     return [
-        BriefVersionListItem(
-            version=version.version,
-            title=version.title,
-            modified_by=_user_ref(users.get(version.modified_by)),
-            modified_at=_format_time(version.modified_at),
-            change_summary=version.change_summary,
-            is_upstream_changed=version.is_upstream_changed,
-            revision_reason=version.revision_reason,
-        )
+        {
+            "version": version.version,
+            "status": str(version.status),
+            "title": version.title,
+            "modified_by_id": version.modified_by,
+            "modified_by_name": version.modified_by_name,
+            "modified_at": _format_time(version.modified_at),
+            "change_summary": version.change_summary,
+            "is_upstream_changed": version.is_upstream_changed,
+            "revision_reason": version.revision_reason,
+        }
         for version in sorted(brief.versions, key=lambda v: v.version, reverse=True)
     ]
 
 
-def update_brief(
+def patch_brief(
     session: Session,
     brief_id: UUID,
     user_id: UUID,
-    request: BriefUpdateRequest,
+    request: BriefPatchRequest,
 ) -> BriefDetail:
-    """Update a draft brief and create a new version."""
+    """Update a draft brief and create or modify a version."""
     brief = _load_brief_with_versions(session, brief_id)
     _require_creator(brief, user_id)
+    user = _load_user(session, user_id)
 
-    if brief.status != BriefStatus.DRAFT:
+    if brief.upstream_state != BriefUpstreamState.EDITING:
         raise APIError(
             code="INVALID_STATUS",
-            message="Only draft briefs can be updated",
+            message="Only briefs in editing state can be patched",
             status_code=409,
         )
 
-    current_version = brief.versions[-1]
-    new_version_number = brief.current_version + 1
+    now = _now()
+    if brief.current_version is None:
+        # No version has been sent yet: modify the existing draft version in place.
+        version = _latest_draft_version(brief)
+        if version is None:
+            raise APIError(
+                code="VERSION_NOT_FOUND",
+                message="No draft version found",
+                status_code=404,
+            )
+    else:
+        # A version was sent and the brief was rejected back to editing:
+        # create a new draft version without changing current_version.
+        version = BriefVersion(
+            brief_id=brief.brief_id,
+            version=_max_version(brief) + 1,
+            status=BriefVersionStatus.DRAFT,
+            title="",
+            content="",
+            attachments=[],
+            priority=BriefPriority.P2,
+            modified_by=user_id,
+            modified_by_name=user.name,
+            modified_at=now,
+        )
+        session.add(version)
+        # Seed new version from the current sent version.
+        current = _current_version(brief)
+        if current is not None:
+            version.title = current.title
+            version.content = current.content
+            version.attachments = current.attachments
+            version.priority = current.priority
+            version.estimated_man_days = current.estimated_man_days
+            version.expected_completion_at = current.expected_completion_at
+            version.change_summary = current.change_summary
 
-    new_version = BriefVersion(
-        brief_id=brief.brief_id,
-        version=new_version_number,
-        title=request.title if request.title is not None else current_version.title,
-        content=request.content if request.content is not None else current_version.content,
-        attachments=request.attachments
-        if request.attachments is not None
-        else current_version.attachments,
-        priority=request.priority if request.priority is not None else current_version.priority,
-        estimated_man_days=(
-            request.estimated_man_days
-            if request.estimated_man_days is not None
-            else current_version.estimated_man_days
-        ),
-        is_upstream_changed=request.is_upstream_changed
-        if request.is_upstream_changed is not None
-        else False,
-        revision_reason=request.revision_reason or "update",
-        modified_by=user_id,
-        modified_at=_now(),
-        change_summary=request.change_summary or "Updated brief",
-    )
-    session.add(new_version)
-    brief.current_version = new_version_number
+    if request.title is not None:
+        version.title = request.title
+    if request.content is not None:
+        version.content = request.content
+    if request.attachments is not None:
+        version.attachments = request.attachments
+    if request.priority is not None:
+        version.priority = request.priority
+    if request.estimated_man_days is not None:
+        version.estimated_man_days = Decimal(str(request.estimated_man_days))
+    if request.expected_completion_at is not None:
+        version.expected_completion_at = _parse_iso(request.expected_completion_at)
+
+    version.modified_by = user_id
+    version.modified_by_name = user.name
+    version.modified_at = now
+    if request.revision_reason is not None:
+        version.revision_reason = request.revision_reason
+    if request.change_summary is not None:
+        version.change_summary = request.change_summary
+
+    if brief.current_version is None:
+        _sync_brief_from_version(session, brief, version)
+
     session.commit()
     session.refresh(brief)
 
-    users = _load_user_map(
-        session,
-        {brief.created_by, brief.assigned_to, new_version.modified_by} - {None},
-    )
-    return _serialize_brief(brief, users, version=new_version, detail=True)
+    return _serialize_brief(brief, version=version, detail=True)
 
 
-def submit_brief(session: Session, brief_id: UUID, user_id: UUID) -> BriefDetail:
-    """Submit a draft brief for review."""
+def review_brief(
+    session: Session,
+    brief_id: UUID,
+    user_id: UUID,
+    request: BriefReviewRequest | None = None,
+) -> BriefDetail:
+    """Submit the current draft version for review."""
     brief = _load_brief_with_versions(session, brief_id)
     _require_creator(brief, user_id)
-    if brief.status != BriefStatus.DRAFT:
+
+    version = _latest_draft_version(brief)
+    if version is None or version.status != BriefVersionStatus.DRAFT:
         raise APIError(
             code="INVALID_STATUS",
-            message="Only draft briefs can be submitted",
+            message="Only a draft version can be submitted for review",
             status_code=409,
         )
-    brief.status = BriefStatus.REVIEWED
+
+    # MVP: auto-pass Arbiter review.
+    review = BriefArbiterReview(
+        id=uuid4(),
+        brief_id=brief.brief_id,
+        brief_version=version.version,
+        arbiter_id="force_skip",
+        status=ArbiterReviewStatus.FORCE_SKIPPED,
+        score=None,
+        issues=[],
+        suggestions=[],
+        reviewed_at=_now(),
+    )
+    session.add(review)
+    session.flush()
+
+    version.status = BriefVersionStatus.REVIEWED
+    version.arbiter_review_id = review.id
+    version.modified_at = _now()
+
     session.commit()
-    brief = _load_brief_with_versions(session, brief_id)
-    users = _load_user_map(session, {brief.created_by, brief.assigned_to} - {None})
-    return _serialize_brief(brief, users, detail=True)
+    session.refresh(brief)
+
+    session.commit()
+    session.refresh(brief)
+
+    return _serialize_brief(brief, version=version, detail=True)
 
 
 def send_brief(
@@ -444,12 +672,15 @@ def send_brief(
     """Send a reviewed brief to a downstream user or external recipient."""
     from briefchain.api.services import invites as invite_service
 
+    now = _now()
     brief = _load_brief_with_versions(session, brief_id)
     _require_creator(brief, user_id)
-    if brief.status != BriefStatus.REVIEWED:
+
+    version = _current_version(brief)
+    if version is None or version.status != BriefVersionStatus.REVIEWED:
         raise APIError(
             code="INVALID_STATUS",
-            message="Only reviewed briefs can be sent",
+            message="Only reviewed brief versions can be sent",
             status_code=409,
         )
 
@@ -470,39 +701,51 @@ def send_brief(
         assigned_to = request.assigned_to
         is_internal_send = True
 
+    assignee = _load_user(session, assigned_to)
+
+    # Mark version as sent and sync denormalized brief fields.
+    version.status = BriefVersionStatus.SENT
+    version.modified_at = now
+    brief.current_version = version.version
+    _sync_brief_from_version(session, brief, version, state_changed_by=user_id)
+    brief.upstream_state = BriefUpstreamState.SENT
+    brief.downstream_state = None
+    brief.assigned_to = assigned_to
+    brief.assigned_to_name = assignee.name
+
     transfer = BriefTransferHistory(
         id=uuid4(),
         brief_id=brief.brief_id,
         brief_version=brief.current_version,
+        arbiter_review_id=version.arbiter_review_id,
         from_user=user_id,
+        from_user_name=_load_user(session, user_id).name,
         to_user=assigned_to,
-        sent_at=_now(),
+        to_user_name=assignee.name,
+        sent_at=now,
     )
-    brief.status = BriefStatus.SENT
-    brief.assigned_to = assigned_to
     session.add(transfer)
     session.commit()
 
     brief = _load_brief_with_versions(session, brief_id)
     transfer = session.get(BriefTransferHistory, transfer.id)
 
-    users = _load_user_map(
-        session,
-        {brief.created_by, brief.assigned_to, transfer.from_user, transfer.to_user} - {None},
-    )
-
     response = BriefLifecycleResponse(
-        brief=_serialize_brief(brief, users, detail=True),
-        transfer=_serialize_transfer(transfer, users),
+        brief=_serialize_brief(brief, detail=True),
+        transfer=_serialize_transfer(transfer),
     )
 
     if request.is_temporary_user and not is_internal_send:
-        invite = session.execute(
-            select(BriefInvite).where(
-                BriefInvite.brief_id == brief_id,
-                BriefInvite.invalidated_at.is_(None),
+        invite = (
+            session.execute(
+                select(BriefInvite).where(
+                    BriefInvite.brief_id == brief_id,
+                    BriefInvite.invalidated_at.is_(None),
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if invite is not None:
             response.invite = {
                 "invite_url": invite_service.build_invite_url(invite.token),
@@ -531,14 +774,18 @@ def _resolve_temporary_recipient(
     phone = request.recipient_phone.strip() if request.recipient_phone else None
 
     if email or phone:
-        existing = session.execute(
-            select(User).where(
-                or_(
-                    User.email == email if email else False,
-                    User.phone == phone if phone else False,
+        existing = (
+            session.execute(
+                select(User).where(
+                    or_(
+                        User.email == email if email else False,
+                        User.phone == phone if phone else False,
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
 
         if existing is not None:
             if existing.user_type == UserType.TEMPORARY:
@@ -606,20 +853,29 @@ def _create_invite_for_temporary_user(
 
 def _get_final_user_id_for_temporary(session: Session, temporary_user_id: UUID) -> UUID | None:
     """Return the final_user_id from any invite linked to the temporary user, if present."""
-    invite = session.execute(
-        select(BriefInvite).where(
-            BriefInvite.temporary_user_id == temporary_user_id,
-            BriefInvite.final_user_id.isnot(None),
+    invite = (
+        session.execute(
+            select(BriefInvite).where(
+                BriefInvite.temporary_user_id == temporary_user_id,
+                BriefInvite.final_user_id.isnot(None),
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     return invite.final_user_id if invite is not None else None
 
 
-def accept_brief(session: Session, brief_id: UUID, user_id: UUID) -> BriefLifecycleResponse:
+def accept_brief(
+    session: Session,
+    brief_id: UUID,
+    user_id: UUID,
+    note: str | None = None,
+) -> BriefLifecycleResponse:
     """Accept a sent brief."""
     brief = _load_brief_with_versions(session, brief_id)
     _require_assigned(brief, user_id)
-    if brief.status != BriefStatus.SENT:
+    if brief.upstream_state != BriefUpstreamState.SENT:
         raise APIError(
             code="INVALID_STATUS",
             message="Only sent briefs can be accepted",
@@ -629,23 +885,15 @@ def accept_brief(session: Session, brief_id: UUID, user_id: UUID) -> BriefLifecy
     transfer = _latest_pending_transfer(session, brief_id)
     if transfer is not None:
         transfer.accepted_at = _now()
-    brief.status = BriefStatus.ACCEPTED
+    brief.upstream_state = BriefUpstreamState.IN_PROCESS
+    brief.downstream_state = BriefDownstreamState.OPENED
+    _set_state_changed(session, brief, user_id)
     session.commit()
     brief = _load_brief_with_versions(session, brief_id)
 
-    users = _load_user_map(
-        session,
-        {
-            brief.created_by,
-            brief.assigned_to,
-            transfer.from_user if transfer else None,
-            transfer.to_user if transfer else None,
-        }
-        - {None},
-    )
     return BriefLifecycleResponse(
-        brief=_serialize_brief(brief, users, detail=True),
-        transfer=_serialize_transfer(transfer, users) if transfer else None,
+        brief=_serialize_brief(brief, detail=True),
+        transfer=_serialize_transfer(transfer) if transfer else None,
     )
 
 
@@ -658,7 +906,7 @@ def reject_brief(
     """Reject a sent brief."""
     brief = _load_brief_with_versions(session, brief_id)
     _require_assigned(brief, user_id)
-    if brief.status != BriefStatus.SENT:
+    if brief.upstream_state != BriefUpstreamState.SENT:
         raise APIError(
             code="INVALID_STATUS",
             message="Only sent briefs can be rejected",
@@ -669,58 +917,422 @@ def reject_brief(
     if transfer is not None:
         transfer.rejected_at = _now()
         transfer.rejection_reason = reason
-    brief.status = BriefStatus.DRAFT
+    brief.upstream_state = BriefUpstreamState.EDITING
+    brief.downstream_state = None
+    brief.assigned_to = None
+    brief.assigned_to_name = None
+    _set_state_changed(session, brief, user_id)
     session.commit()
     brief = _load_brief_with_versions(session, brief_id)
 
-    users = _load_user_map(
-        session,
-        {
-            brief.created_by,
-            brief.assigned_to,
-            transfer.from_user if transfer else None,
-            transfer.to_user if transfer else None,
-        }
-        - {None},
-    )
     return BriefLifecycleResponse(
-        brief=_serialize_brief(brief, users, detail=True),
-        transfer=_serialize_transfer(transfer, users) if transfer else None,
+        brief=_serialize_brief(brief, detail=True),
+        transfer=_serialize_transfer(transfer) if transfer else None,
     )
 
 
-def cancel_brief(session: Session, brief_id: UUID, user_id: UUID) -> BriefDetail:
+def cancel_brief(session: Session, brief_id: UUID, user_id: UUID, content: str) -> BriefDetail:
     """Cancel a brief that is not done."""
     brief = _load_brief_with_versions(session, brief_id)
     _require_creator(brief, user_id)
-    if brief.status == BriefStatus.DONE:
+    if brief.upstream_state in {BriefUpstreamState.DONE, BriefUpstreamState.CANCELLED}:
         raise APIError(
             code="INVALID_STATUS",
-            message="Done briefs cannot be cancelled",
+            message="Done or cancelled briefs cannot be cancelled",
             status_code=409,
         )
-    brief.status = BriefStatus.CANCELLED
+
+    _create_feedback(
+        session,
+        brief,
+        user_id,
+        brief.assigned_to if brief.assigned_to else brief.created_by,
+        FeedbackType.CANCEL,
+        content,
+        [],
+        is_to_down=True,
+    )
+    brief.upstream_state = BriefUpstreamState.CANCELLED
+    _set_state_changed(session, brief, user_id)
     session.commit()
     brief = _load_brief_with_versions(session, brief_id)
-    users = _load_user_map(session, {brief.created_by, brief.assigned_to} - {None})
-    return _serialize_brief(brief, users, detail=True)
+    return _serialize_brief(brief, detail=True)
 
 
-def complete_brief(session: Session, brief_id: UUID, user_id: UUID) -> BriefDetail:
-    """Mark an accepted brief as done."""
+def suspend_brief(session: Session, brief_id: UUID, user_id: UUID, content: str) -> BriefDetail:
+    """Suspend a sent or in-process brief."""
+    brief = _load_brief_with_versions(session, brief_id)
+    _require_creator(brief, user_id)
+    if brief.upstream_state not in {BriefUpstreamState.SENT, BriefUpstreamState.IN_PROCESS}:
+        raise APIError(
+            code="INVALID_STATUS",
+            message="Only sent or in-process briefs can be suspended",
+            status_code=409,
+        )
+
+    _create_feedback(
+        session,
+        brief,
+        user_id,
+        brief.assigned_to if brief.assigned_to else brief.created_by,
+        FeedbackType.SUSPEND,
+        content,
+        [],
+        is_to_down=True,
+    )
+    brief.upstream_state = BriefUpstreamState.SUSPENDED
+    _set_state_changed(session, brief, user_id)
+    session.commit()
+    brief = _load_brief_with_versions(session, brief_id)
+    return _serialize_brief(brief, detail=True)
+
+
+def resume_brief(session: Session, brief_id: UUID, user_id: UUID, content: str) -> BriefDetail:
+    """Resume a suspended brief."""
+    brief = _load_brief_with_versions(session, brief_id)
+    _require_creator(brief, user_id)
+    if brief.upstream_state != BriefUpstreamState.SUSPENDED:
+        raise APIError(
+            code="INVALID_STATUS",
+            message="Only suspended briefs can be resumed",
+            status_code=409,
+        )
+
+    _create_feedback(
+        session,
+        brief,
+        user_id,
+        brief.assigned_to if brief.assigned_to else brief.created_by,
+        FeedbackType.RESUME,
+        content,
+        [],
+        is_to_down=True,
+    )
+    brief.upstream_state = BriefUpstreamState.IN_PROCESS
+    _set_state_changed(session, brief, user_id)
+    session.commit()
+    brief = _load_brief_with_versions(session, brief_id)
+    return _serialize_brief(brief, detail=True)
+
+
+def approve_brief(session: Session, brief_id: UUID, user_id: UUID, content: str) -> BriefDetail:
+    """Approve a submitted brief."""
+    brief = _load_brief_with_versions(session, brief_id)
+    _require_creator(brief, user_id)
+    if (
+        brief.upstream_state != BriefUpstreamState.IN_PROCESS
+        or brief.downstream_state != BriefDownstreamState.SUBMITTED
+    ):
+        raise APIError(
+            code="INVALID_STATUS",
+            message="Only submitted briefs can be approved",
+            status_code=409,
+        )
+
+    _create_feedback(
+        session,
+        brief,
+        user_id,
+        brief.assigned_to,
+        FeedbackType.APPROVE,
+        content,
+        [],
+        is_to_down=True,
+    )
+    brief.upstream_state = BriefUpstreamState.DONE
+    brief.downstream_state = None
+    _set_state_changed(session, brief, user_id)
+    session.commit()
+    brief = _load_brief_with_versions(session, brief_id)
+    return _serialize_brief(brief, detail=True)
+
+
+def reject_submit_brief(
+    session: Session,
+    brief_id: UUID,
+    user_id: UUID,
+    content: str,
+) -> BriefDetail:
+    """Reject a submitted brief and force downstream to reopen it."""
+    brief = _load_brief_with_versions(session, brief_id)
+    _require_creator(brief, user_id)
+    if brief.downstream_state != BriefDownstreamState.SUBMITTED:
+        raise APIError(
+            code="INVALID_STATUS",
+            message="Only submitted briefs can be rejected for rework",
+            status_code=409,
+        )
+
+    _create_feedback(
+        session,
+        brief,
+        user_id,
+        brief.assigned_to,
+        FeedbackType.REJECT_SUBMIT,
+        content,
+        [],
+        is_to_down=True,
+    )
+    brief.downstream_state = BriefDownstreamState.OPENED
+    _set_state_changed(session, brief, user_id)
+    session.commit()
+    brief = _load_brief_with_versions(session, brief_id)
+    return _serialize_brief(brief, detail=True)
+
+
+def update_brief_version(
+    session: Session,
+    brief_id: UUID,
+    user_id: UUID,
+    request: BriefUpdateActionRequest,
+) -> BriefDetail:
+    """Push a new version of an in-process brief."""
+    brief = _load_brief_with_versions(session, brief_id)
+    _require_creator(brief, user_id)
+    user = _load_user(session, user_id)
+    if brief.upstream_state != BriefUpstreamState.IN_PROCESS:
+        raise APIError(
+            code="INVALID_STATUS",
+            message="Only in-process briefs can be updated",
+            status_code=409,
+        )
+
+    now = _now()
+    current = _current_version(brief)
+    current_title = current.title if current else ""
+    current_content = current.content if current else ""
+    current_attachments = current.attachments if current else []
+    current_priority = current.priority if current else BriefPriority.P2
+    current_estimated = current.estimated_man_days if current else None
+    current_expected = current.expected_completion_at if current else None
+
+    new_version = BriefVersion(
+        brief_id=brief.brief_id,
+        version=_max_version(brief) + 1,
+        status=BriefVersionStatus.DRAFT,
+        title=request.title if request.title is not None else current_title,
+        content=current_content,
+        attachments=request.attachments if request.attachments is not None else current_attachments,
+        priority=request.priority if request.priority is not None else current_priority,
+        estimated_man_days=(
+            Decimal(str(request.estimated_man_days))
+            if request.estimated_man_days is not None
+            else current_estimated
+        ),
+        expected_completion_at=(
+            _parse_iso(request.expected_completion_at)
+            if request.expected_completion_at is not None
+            else current_expected
+        ),
+        is_upstream_changed=True,
+        revision_reason=request.revision_reason or "update",
+        modified_by=user_id,
+        modified_by_name=user.name,
+        modified_at=now,
+        change_summary=request.change_summary or "Updated brief",
+    )
+    session.add(new_version)
+
+    # Auto-review and auto-send the new version (MVP).
+    review = BriefArbiterReview(
+        id=uuid4(),
+        brief_id=brief.brief_id,
+        brief_version=new_version.version,
+        arbiter_id="force_skip",
+        status=ArbiterReviewStatus.FORCE_SKIPPED,
+        score=None,
+        issues=[],
+        suggestions=[],
+        reviewed_at=now,
+    )
+    session.add(review)
+    session.flush()
+
+    new_version.status = BriefVersionStatus.SENT
+    new_version.arbiter_review_id = review.id
+    brief.current_version = new_version.version
+    _sync_brief_from_version(brief, new_version, state_changed_by=user_id)
+    brief.downstream_state = BriefDownstreamState.OPENED
+
+    _create_feedback(
+        session,
+        brief,
+        user_id,
+        brief.assigned_to,
+        FeedbackType.UPDATE,
+        request.content,
+        [],
+        is_to_down=True,
+    )
+    _set_state_changed(session, brief, user_id)
+    session.commit()
+    brief = _load_brief_with_versions(session, brief_id)
+    return _serialize_brief(brief, detail=True)
+
+
+def downstream_process(
+    session: Session,
+    brief_id: UUID,
+    user_id: UUID,
+    content: str | None,
+    attachments: list[dict] | None,
+) -> dict:
+    """Submit a progress feedback without changing the brief state."""
     brief = _load_brief_with_versions(session, brief_id)
     _require_assigned(brief, user_id)
-    if brief.status != BriefStatus.ACCEPTED:
+    if brief.upstream_state != BriefUpstreamState.IN_PROCESS:
         raise APIError(
             code="INVALID_STATUS",
-            message="Only accepted briefs can be completed",
+            message="Only in-process briefs can receive progress updates",
             status_code=409,
         )
-    brief.status = BriefStatus.DONE
+
+    feedback = _create_feedback(
+        session,
+        brief,
+        user_id,
+        brief.created_by,
+        FeedbackType.PROGRESS,
+        content or "",
+        attachments or [],
+        is_to_down=False,
+    )
+    session.commit()
+    return _serialize_feedback(feedback)
+
+
+def downstream_submit(
+    session: Session,
+    brief_id: UUID,
+    user_id: UUID,
+    content: str,
+    attachments: list[dict] | None,
+) -> BriefDetail:
+    """Submit completion of an in-process brief."""
+    brief = _load_brief_with_versions(session, brief_id)
+    _require_assigned(brief, user_id)
+    if brief.upstream_state != BriefUpstreamState.IN_PROCESS:
+        raise APIError(
+            code="INVALID_STATUS",
+            message="Only in-process briefs can be submitted",
+            status_code=409,
+        )
+
+    _create_feedback(
+        session,
+        brief,
+        user_id,
+        brief.created_by,
+        FeedbackType.SUBMIT,
+        content,
+        attachments or [],
+        is_to_down=False,
+    )
+    brief.downstream_state = BriefDownstreamState.SUBMITTED
+    _set_state_changed(session, brief, user_id)
     session.commit()
     brief = _load_brief_with_versions(session, brief_id)
-    users = _load_user_map(session, {brief.created_by, brief.assigned_to} - {None})
-    return _serialize_brief(brief, users, detail=True)
+    return _serialize_brief(brief, detail=True)
+
+
+def downstream_open(
+    session: Session,
+    brief_id: UUID,
+    user_id: UUID,
+    content: str,
+) -> BriefDetail:
+    """Reopen a brief from submitted/delegated/blocked state."""
+    brief = _load_brief_with_versions(session, brief_id)
+    _require_assigned(brief, user_id)
+    if brief.upstream_state != BriefUpstreamState.IN_PROCESS:
+        raise APIError(
+            code="INVALID_STATUS",
+            message="Only in-process briefs can be reopened",
+            status_code=409,
+        )
+
+    _create_feedback(
+        session,
+        brief,
+        user_id,
+        brief.created_by,
+        FeedbackType.OPEN,
+        content,
+        [],
+        is_to_down=False,
+    )
+    brief.downstream_state = BriefDownstreamState.OPENED
+    _set_state_changed(session, brief, user_id)
+    session.commit()
+    brief = _load_brief_with_versions(session, brief_id)
+    return _serialize_brief(brief, detail=True)
+
+
+def downstream_delegate(
+    session: Session,
+    brief_id: UUID,
+    user_id: UUID,
+    content: str | None,
+) -> BriefDetail:
+    """Mark a brief as delegated."""
+    brief = _load_brief_with_versions(session, brief_id)
+    _require_assigned(brief, user_id)
+    if brief.upstream_state != BriefUpstreamState.IN_PROCESS:
+        raise APIError(
+            code="INVALID_STATUS",
+            message="Only in-process briefs can be delegated",
+            status_code=409,
+        )
+
+    _create_feedback(
+        session,
+        brief,
+        user_id,
+        brief.created_by,
+        FeedbackType.DELEGATE,
+        content or "",
+        [],
+        is_to_down=False,
+    )
+    brief.downstream_state = BriefDownstreamState.DELEGATED
+    _set_state_changed(session, brief, user_id)
+    session.commit()
+    brief = _load_brief_with_versions(session, brief_id)
+    return _serialize_brief(brief, detail=True)
+
+
+def downstream_block(
+    session: Session,
+    brief_id: UUID,
+    user_id: UUID,
+    content: str,
+    attachments: list[dict] | None,
+) -> BriefDetail:
+    """Mark a brief as blocked."""
+    brief = _load_brief_with_versions(session, brief_id)
+    _require_assigned(brief, user_id)
+    if brief.upstream_state != BriefUpstreamState.IN_PROCESS:
+        raise APIError(
+            code="INVALID_STATUS",
+            message="Only in-process briefs can be blocked",
+            status_code=409,
+        )
+
+    _create_feedback(
+        session,
+        brief,
+        user_id,
+        brief.created_by,
+        FeedbackType.BLOCK,
+        content,
+        attachments or [],
+        is_to_down=False,
+    )
+    brief.downstream_state = BriefDownstreamState.BLOCKED
+    _set_state_changed(session, brief, user_id)
+    session.commit()
+    brief = _load_brief_with_versions(session, brief_id)
+    return _serialize_brief(brief, detail=True)
 
 
 def _latest_pending_transfer(session: Session, brief_id: UUID) -> BriefTransferHistory | None:
@@ -751,14 +1363,7 @@ def list_transfers(session: Session, brief_id: UUID) -> list[BriefTransferRespon
         .scalars()
         .all()
     )
-
-    user_ids = set()
-    for transfer in transfers:
-        user_ids.add(transfer.from_user)
-        user_ids.add(transfer.to_user)
-    users = _load_user_map(session, user_ids)
-
-    return [_serialize_transfer(transfer, users) for transfer in transfers]
+    return [_serialize_transfer(transfer) for transfer in transfers]
 
 
 def list_chains(
@@ -814,16 +1419,17 @@ def list_chains(
         ).all()
         brief_counts = {row.root_id: row.cnt for row in counts}
 
-    from briefchain.api.schemas.chains import ChainListItem
-
     items = [
-        ChainListItem(
-            chain_id=chain.chain_id,
-            title=chain.title,
-            root_brief_id=chain.chain_id,
-            brief_count=brief_counts.get(chain.chain_id, 0),
-            created_at=_format_time(chain.created_at),
-        )
+        {
+            "chain_id": chain.chain_id,
+            "title": chain.title,
+            "owner_id": chain.owner_id,
+            "owner_name": chain.owner_name,
+            "priority": chain.priority,
+            "root_brief_id": chain.chain_id,
+            "brief_count": brief_counts.get(chain.chain_id, 0),
+            "created_at": _format_time(chain.created_at),
+        }
         for chain in chains
     ]
 
@@ -864,20 +1470,15 @@ def get_chain_detail(session: Session, chain_id: UUID) -> dict:
         .all()
     )
 
-    user_ids = {root_brief.created_by, root_brief.assigned_to}
-    for brief in briefs:
-        user_ids.add(brief.created_by)
-        if brief.assigned_to:
-            user_ids.add(brief.assigned_to)
-    users = _load_user_map(session, user_ids)
-
     brief_map = {brief.brief_id: brief for brief in briefs}
 
     def build_tree(brief: Brief) -> BriefTreeNode:
+        version = _current_version(brief)
         return BriefTreeNode(
             brief_id=brief.brief_id,
-            title=brief.versions[-1].title if brief.versions else "",
-            status=str(brief.status),
+            title=brief.title if version is None else version.title,
+            upstream_state=brief.upstream_state,
+            downstream_state=brief.downstream_state,
             children=[
                 build_tree(brief_map[child_id])
                 for child_id in _children_ids(briefs, brief.brief_id)
@@ -887,7 +1488,10 @@ def get_chain_detail(session: Session, chain_id: UUID) -> dict:
     return ChainDetail(
         chain_id=chain.chain_id,
         title=chain.title,
-        root_brief=_serialize_brief(root_brief, users, detail=False),
+        owner_id=chain.owner_id,
+        owner_name=chain.owner_name,
+        priority=chain.priority,
+        root_brief=_serialize_brief(root_brief, detail=False),
         tree=build_tree(root_brief),
     )
 

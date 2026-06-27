@@ -11,12 +11,22 @@ export interface BriefDetail {
   parent_id: string | null;
   title: string;
   content: string;
-  status: string;
+  upstream_state: string;
+  downstream_state: string | null;
   priority: string;
-  created_by: UserRef;
-  assigned_to: UserRef | null;
+  created_by_id: string;
+  created_by_name: string;
+  assigned_to_id: string | null;
+  assigned_to_name: string | null;
   estimated_man_days: number | null;
-  current_version: number;
+  expected_completion_at: string | null;
+  current_version: number | null;
+  current_version_status: string | null;
+  version: number;
+  is_current: boolean;
+  status_changed_by_id: string;
+  status_changed_by_name: string;
+  status_changed_at: string;
   created_at: string;
   updated_at: string;
   attachments: unknown[];
@@ -25,8 +35,10 @@ export interface BriefDetail {
 export interface Transfer {
   id: string;
   brief_version: number;
-  from_user: UserRef;
-  to_user: UserRef;
+  from_user_id: string;
+  from_user_name: string;
+  to_user_id: string;
+  to_user_name: string;
   sent_at: string;
   accepted_at: string | null;
   rejected_at: string | null;
@@ -36,7 +48,11 @@ export interface Transfer {
 export interface Feedback {
   id: string;
   type: string;
-  from_user: UserRef;
+  is_to_down: boolean;
+  from_user_id: string;
+  from_user_name: string;
+  to_user_id: string;
+  to_user_name: string;
   content: string;
   created_at: string;
 }
@@ -49,18 +65,27 @@ interface BriefDetailViewProps {
   readOnly?: boolean;
 }
 
-const statusClass = (statusValue: string): string => {
+const upstreamStateClass = (stateValue: string): string => {
   const map: Record<string, string> = {
-    draft: "badge-draft",
+    editing: "badge-draft",
     reviewed: "badge-reviewed",
     sent: "badge-sent",
-    accepted: "badge-accepted",
-    done: "badge-done",
-    blocked: "badge-blocked",
+    in_process: "badge-accepted",
+    suspended: "badge-blocked",
     cancelled: "badge-cancelled",
-    rejected: "badge-rejected",
+    done: "badge-done",
   };
-  return map[statusValue] || "badge-draft";
+  return map[stateValue] || "badge-draft";
+};
+
+const downstreamStateClass = (stateValue: string): string => {
+  const map: Record<string, string> = {
+    opened: "badge-accepted",
+    submitted: "badge-reviewed",
+    delegated: "badge-sent",
+    blocked: "badge-blocked",
+  };
+  return map[stateValue] || "badge-accepted";
 };
 
 const priorityClass = (p: string): string => {
@@ -81,9 +106,19 @@ export default function BriefDetailView({
       <div className="detail-header">
         <div className="flex items-center gap-12">
           <h1>{brief.title}</h1>
-          <span className={`badge ${statusClass(brief.status)}`}>
-            {brief.status}
+          <span className={`badge ${upstreamStateClass(brief.upstream_state)}`}>
+            {brief.upstream_state}
           </span>
+          {brief.current_version_status && (
+            <span className={`badge ${upstreamStateClass(brief.current_version_status)}`}>
+              {brief.current_version_status}
+            </span>
+          )}
+          {brief.downstream_state && (
+            <span className={`badge ${downstreamStateClass(brief.downstream_state)}`}>
+              {brief.downstream_state}
+            </span>
+          )}
           <span className={`badge ${priorityClass(brief.priority)}`}>
             {brief.priority.toUpperCase()}
           </span>
@@ -93,6 +128,8 @@ export default function BriefDetailView({
 
       <div className="detail-tabs">
         <div className="detail-tab active">内容</div>
+        <div className="detail-tab">流转</div>
+        <div className="detail-tab">Feedback</div>
       </div>
 
       <div className="card">
@@ -104,6 +141,13 @@ export default function BriefDetailView({
             <>
               <h3 className="mb-12 mt-16">预估人天</h3>
               <p>{brief.estimated_man_days}</p>
+            </>
+          )}
+
+          {brief.expected_completion_at && (
+            <>
+              <h3 className="mb-12 mt-16">预期完成时间</h3>
+              <p>{new Date(brief.expected_completion_at).toLocaleString("zh-CN")}</p>
             </>
           )}
         </div>
@@ -123,17 +167,17 @@ export default function BriefDetailView({
                   <div className="timeline-content">
                     <div className="flex items-center justify-between">
                       <span>
-                        <strong>{transfer.from_user.name}</strong> 发送给{" "}
-                        <strong>{transfer.to_user.name}</strong>
+                        <strong>{transfer.from_user_name}</strong> 发送给{" "}
+                        <strong>{transfer.to_user_name}</strong>
                       </span>
                       <span
-                        className={`badge ${statusClass(
+                        className={`badge ${
                           transfer.accepted_at
-                            ? "accepted"
+                            ? "badge-accepted"
                             : transfer.rejected_at
-                              ? "rejected"
-                              : "sent"
-                        )}`}
+                              ? "badge-cancelled"
+                              : "badge-sent"
+                        }`}
                       >
                         {transfer.accepted_at
                           ? "accepted"
@@ -173,23 +217,27 @@ export default function BriefDetailView({
                     background:
                       feedback.type === "blocked"
                         ? "var(--c-amber-bg)"
-                        : feedback.type === "completion"
+                        : feedback.type === "submit"
                           ? "var(--c-green-bg)"
                           : "var(--c-primary-bg)",
                     color:
                       feedback.type === "blocked"
                         ? "var(--c-amber)"
-                        : feedback.type === "completion"
+                        : feedback.type === "submit"
                           ? "var(--c-green)"
                           : "var(--c-primary)",
                   }}
                 >
-                  {feedback.type === "blocked" ? "!" : feedback.type === "completion" ? "✓" : "•"}
+                  {feedback.type === "blocked" ? "!" : feedback.type === "submit" ? "✓" : "•"}
                 </div>
                 <div className="flex-1">
                   <div className="flex items-center justify-between">
                     <span>
-                      <strong>{feedback.type}</strong> — {feedback.from_user.name}
+                      <strong>{feedback.type}</strong>
+                      {" "}
+                      {feedback.is_to_down ? "→" : "←"}
+                      {" "}
+                      {feedback.from_user_name} → {feedback.to_user_name}
                     </span>
                     <span className="text-3" style={{ fontSize: 12 }}>
                       {new Date(feedback.created_at).toLocaleString("zh-CN")}
@@ -204,8 +252,8 @@ export default function BriefDetailView({
       </div>
 
       <div className="mt-16 text-3" style={{ fontSize: 12 }}>
-        创建者：{brief.created_by.name} | 执行者：{brief.assigned_to?.name || "--"} | 版本：v
-        {brief.current_version}
+        创建者：{brief.created_by_name} | 执行者：{brief.assigned_to_name || "--"} | 版本：v
+        {brief.version}
       </div>
     </div>
   );

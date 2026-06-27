@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 
 class Feedback(Base, TimestampMixin):
-    """Feedback sent by a downstream about a brief."""
+    """Formal contract notification exchanged about a brief."""
 
     __tablename__ = "feedbacks"
 
@@ -29,17 +29,22 @@ class Feedback(Base, TimestampMixin):
     )
     brief_version: Mapped[int] = mapped_column(Integer, nullable=False)
 
+    is_to_down: Mapped[bool] = mapped_column(Boolean, nullable=False)
     type: Mapped[FeedbackType] = mapped_column(String(20), nullable=False)
-    is_auto_generated: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        default=False,
-    )
 
     content: Mapped[str] = mapped_column(Text, nullable=False)
     attachments: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
 
     from_user: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    from_user_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    to_user: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    to_user_name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    is_auto_generated: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
     confirmed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,

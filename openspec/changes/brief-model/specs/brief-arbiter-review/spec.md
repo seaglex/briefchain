@@ -21,3 +21,17 @@ The system SHALL restrict `BriefArbiterReview.status` to the values "passed", "f
 #### Scenario: Invalid review status is rejected
 - **WHEN** code attempts to assign an unsupported value to `BriefArbiterReview.status`
 - **THEN** the assignment is rejected by the `ArbiterReviewStatus` enumeration
+
+### Requirement: Brief arbiter review issues follow a structured schema
+The system SHALL store `issues` as a JSON list where each item contains `field`, `severity` ("blocker" | "major" | "minor"), and `message`.
+
+#### Scenario: Review reports a blocker
+- **WHEN** an arbiter review finds a blocker in the brief title
+- **THEN** `issues` contains an object with `field` set to "title", `severity` set to "blocker", and a non-empty `message`
+
+### Requirement: Brief arbiter review suggestions are a string list
+The system SHALL store `suggestions` as a JSON list of strings.
+
+#### Scenario: Review includes improvement suggestions
+- **WHEN** an arbiter review produces improvement recommendations
+- **THEN** `suggestions` is a non-empty list of strings

@@ -24,9 +24,11 @@ def test_create_root_brief(client: TestClient, auth_headers_creator: dict[str, s
     assert response.status_code == 201
     data = response.json()
     assert data["title"] == "New Brief"
-    assert data["status"] == "draft"
-    assert data["current_version"] == 1
-    assert data["is_current"] is True
+    assert data["upstream_state"] == "editing"
+    assert data["downstream_state"] is None
+    assert data["current_version"] is None
+    assert data["version"] == 1
+    assert data["is_current"] is False
 
 
 def test_get_brief_latest_version(
@@ -41,41 +43,48 @@ def test_get_brief_latest_version(
     data = response.json()
     assert data["brief_id"] == str(draft_brief.brief_id)
     assert data["version"] == 1
-    assert data["is_current"] is True
+    assert data["is_current"] is False
 
 
-def test_update_brief_creates_new_version(
+def test_patch_brief_modifies_draft_version(
     client: TestClient,
     auth_headers_creator: dict[str, str],
     draft_brief: Brief,
 ) -> None:
-    """Updating a draft brief increments the version."""
-    response = client.patch(
-        f"/api/v1/briefs/{draft_brief.brief_id}",
+    """Patching a never-sent brief modifies the draft version in place."""
+    response = client.post(
+        f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=patch",
         headers=auth_headers_creator,
         json={"title": "Updated Title"},
     )
 
     assert response.status_code == 200
     data = response.json()
-    assert data["current_version"] == 2
+    assert data["current_version"] is None
     assert data["title"] == "Updated Title"
+    assert data["version"] == 1
 
 
-def test_submit_brief(
+def test_review_brief(
     client: TestClient,
     auth_headers_creator: dict[str, str],
     draft_brief: Brief,
 ) -> None:
-    """Creator can submit a draft brief."""
+    """Creator can submit a draft version for review."""
     response = client.post(
-        f"/api/v1/briefs/{draft_brief.brief_id}/submit",
+        f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=review",
         headers=auth_headers_creator,
     )
 
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "reviewed"
+    assert data["upstream_state"] == "editing"
+
+    versions = client.get(
+        f"/api/v1/briefs/{draft_brief.brief_id}/versions",
+        headers=auth_headers_creator,
+    ).json()
+    assert versions[0]["status"] == "reviewed"
 
 
 def test_send_brief(
@@ -86,19 +95,20 @@ def test_send_brief(
 ) -> None:
     """Creator can send a reviewed brief to downstream."""
     client.post(
-        f"/api/v1/briefs/{draft_brief.brief_id}/submit",
+        f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=review",
         headers=auth_headers_creator,
     )
     response = client.post(
-        f"/api/v1/briefs/{draft_brief.brief_id}/send",
+        f"/api/v1/briefs/{draft_brief.brief_id}/transfer?action=send",
         headers=auth_headers_creator,
         json={"assigned_to": str(downstream.id)},
     )
 
     assert response.status_code == 200
     data = response.json()
-    assert data["brief"]["status"] == "sent"
-    assert data["transfer"]["to_user"]["id"] == str(downstream.id)
+    assert data["brief"]["upstream_state"] == "sent"
+    assert data["brief"]["current_version"] == 1
+    assert data["transfer"]["to_user_id"] == str(downstream.id)
 
 
 def test_accept_brief(
@@ -110,23 +120,24 @@ def test_accept_brief(
 ) -> None:
     """Downstream can accept a sent brief."""
     client.post(
-        f"/api/v1/briefs/{draft_brief.brief_id}/submit",
+        f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=review",
         headers=auth_headers_creator,
     )
     client.post(
-        f"/api/v1/briefs/{draft_brief.brief_id}/send",
+        f"/api/v1/briefs/{draft_brief.brief_id}/transfer?action=send",
         headers=auth_headers_creator,
         json={"assigned_to": str(downstream.id)},
     )
 
     response = client.post(
-        f"/api/v1/briefs/{draft_brief.brief_id}/accept",
+        f"/api/v1/briefs/{draft_brief.brief_id}/transfer?action=accept",
         headers=auth_headers_downstream,
     )
 
     assert response.status_code == 200
     data = response.json()
-    assert data["brief"]["status"] == "accepted"
+    assert data["brief"]["upstream_state"] == "in_process"
+    assert data["brief"]["downstream_state"] == "opened"
 
 
 def test_list_versions(
@@ -135,8 +146,8 @@ def test_list_versions(
     draft_brief: Brief,
 ) -> None:
     """Versions endpoint lists all versions."""
-    client.patch(
-        f"/api/v1/briefs/{draft_brief.brief_id}",
+    client.post(
+        f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=patch",
         headers=auth_headers_creator,
         json={"title": "Updated"},
     )
@@ -148,7 +159,7 @@ def test_list_versions(
 
     assert response.status_code == 200
     data = response.json()
-    assert len(data) == 2
+    assert len(data) == 1
 
 
 def test_get_specific_version(
@@ -156,15 +167,15 @@ def test_get_specific_version(
     auth_headers_creator: dict[str, str],
     draft_brief: Brief,
 ) -> None:
-    """Specific version endpoint returns historical content."""
-    client.patch(
-        f"/api/v1/briefs/{draft_brief.brief_id}",
+    """Specific version content is returned via the detail endpoint."""
+    client.post(
+        f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=patch",
         headers=auth_headers_creator,
         json={"title": "Updated"},
     )
 
     response = client.get(
-        f"/api/v1/briefs/{draft_brief.brief_id}/versions/1",
+        f"/api/v1/briefs/{draft_brief.brief_id}?version=1",
         headers=auth_headers_creator,
     )
 
@@ -172,24 +183,6 @@ def test_get_specific_version(
     data = response.json()
     assert data["version"] == 1
     assert data["is_current"] is False
-
-
-def test_create_feedback(
-    client: TestClient,
-    auth_headers_creator: dict[str, str],
-    draft_brief: Brief,
-) -> None:
-    """Creator can create feedback on a brief."""
-    response = client.post(
-        f"/api/v1/briefs/{draft_brief.brief_id}/feedbacks",
-        headers=auth_headers_creator,
-        json={"type": "progress", "content": "Making progress"},
-    )
-
-    assert response.status_code == 201
-    data = response.json()
-    assert data["type"] == "progress"
-    assert data["content"] == "Making progress"
 
 
 def test_list_chains(
@@ -217,3 +210,4 @@ def test_get_chain_detail(
     data = response.json()
     assert data["chain_id"] == str(draft_brief.brief_id)
     assert "tree" in data
+    assert "owner_id" in data

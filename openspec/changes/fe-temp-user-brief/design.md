@@ -1,8 +1,8 @@
 ## Context
 
-The backend already supports sending Briefs to external recipients through temporary users and signed invite tokens (`docs/mvp_design/05-invite-link-design.md`). The API endpoints exist:
+The backend already supports sending Briefs to external recipients through temporary users and signed invite tokens (`docs/mvp_design/05-invite-link-design.md`). The API endpoint has moved into the new transfer group:
 
-- `POST /api/v1/briefs/{brief_id}/send` with `is_temporary_user=true` returns an invite URL.
+- `POST /api/v1/briefs/{brief_id}/transfer?action=send` with `is_temporary_user=true` returns an invite URL.
 - `GET /invites/{token}` and related action endpoints are public and token-secured.
 
 This change is purely frontend: expose the temporary-user send flow to creators and build the public invite recipient page.
@@ -24,7 +24,7 @@ This change is purely frontend: expose the temporary-user send flow to creators 
 ## Decisions
 
 1. **Reuse the existing Brief detail component on the invite page**
-   - The backend `GET /invites/{token}` already returns a `brief` object with the same shape as `GET /api/v1/briefs/{brief_id}`.
+   - The backend `GET /invites/{token}` returns a `brief` object with the same shape as `GET /api/v1/briefs/{brief_id}`.
    - Reusing the component keeps behavior consistent and avoids duplicate presentation logic.
 
 2. **Single `email_or_phone` input field on the send form**
@@ -44,13 +44,18 @@ This change is purely frontend: expose the temporary-user send flow to creators 
    - Expired, invalid, or invalidated tokens show an error message and a link to login.
    - No automatic redirect; the error explains what happened.
 
+6. **Invite page actions align with the new brief lifecycle**
+   - Accept/reject belong to the transfer phase and use token-based invite endpoints.
+   - After accepting, the recipient can perform downstream actions (submit / block / open / delegate) through token-based invite endpoints that map to the new downstream-actions logic.
+   - Creator-only actions (edit, review, send, cancel, suspend, resume, approve, reject_submit, update) are hidden on the invite page.
+
 ## Risks / Trade-offs
 
 - **[Risk] Invite page briefly shows layout shift while fetching.**
   - *Mitigation*: Use a loading state and suspend Brief detail rendering until data arrives.
 
 - **[Risk] Reusing the Brief detail component may expose creator-only actions to temporary users.**
-  - *Mitigation*: The public page passes an `isInviteView` or `readOnly` flag to hide send/edit/submit actions. Action buttons (accept/reject/block/complete) are rendered separately by the invite page itself.
+  - *Mitigation*: The public page passes an `isInviteView` or `readOnly` flag to hide send/edit/review/submit actions. Action buttons (accept/reject/submit/block/open/delegate) are rendered separately by the invite page itself.
 
 - **[Trade-off] Email-or-phone single field is less explicit than two separate fields.**
   - Keeps the form short and matches the user's wording. If validation becomes complex later, it can be split into two fields.

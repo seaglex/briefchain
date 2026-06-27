@@ -12,8 +12,10 @@ class TransferListItem(BaseModel):
 
     id: UUID
     brief_version: int
-    from_user: dict
-    to_user: dict
+    from_user_id: UUID
+    from_user_name: str
+    to_user_id: UUID
+    to_user_name: str
     sent_at: str
     accepted_at: str | None
     rejected_at: str | None

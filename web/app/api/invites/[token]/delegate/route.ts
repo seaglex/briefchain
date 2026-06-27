@@ -5,5 +5,5 @@ export async function POST(
   { params }: { params: Promise<{ token: string }> }
 ) {
   const { token } = await params;
-  return proxyWithoutToken(`/api/v1/invites/${token}/done`, request, "POST");
+  return proxyWithoutToken(`/api/v1/invites/${token}/delegate`, request, "POST");
 }

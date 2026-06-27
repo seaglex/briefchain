@@ -8,22 +8,28 @@ import UserSelector from "@/components/UserSelector";
 
 interface BriefActionsProps {
   briefId: string;
-  status: string;
+  upstreamState: string;
+  downstreamState: string | null;
   title: string;
   content: string;
   priority: string;
   estimatedManDays: number | null;
+  expectedCompletionAt: string | null;
+  currentVersionStatus: string | null;
   isCreator: boolean;
   isAssignee: boolean;
 }
 
 export default function BriefActions({
   briefId,
-  status,
+  upstreamState,
+  downstreamState,
   title,
   content,
   priority,
   estimatedManDays,
+  expectedCompletionAt,
+  currentVersionStatus,
   isCreator,
   isAssignee,
 }: BriefActionsProps) {
@@ -31,22 +37,34 @@ export default function BriefActions({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Edit state
-  const [isEditing, setIsEditing] = useState(false);
+  // Edit / update form state
+  const [editMode, setEditMode] = useState<"patch" | "update">("patch");
   const [editTitle, setEditTitle] = useState(title);
   const [editContent, setEditContent] = useState(content);
   const [editPriority, setEditPriority] = useState(priority);
-  const [editEstimated, setEditEstimated] = useState(
-    estimatedManDays?.toString() || ""
+  const [editEstimated, setEditEstimated] = useState(estimatedManDays?.toString() || "");
+  const [editExpectedCompletion, setEditExpectedCompletion] = useState(
+    expectedCompletionAt ? expectedCompletionAt.slice(0, 16) : ""
   );
+  const [editReason, setEditReason] = useState("");
 
   // Modal state
   const [modal, setModal] = useState<
     | null
+    | "edit"
     | "send"
     | "reject"
-    | "complete"
-    | "blocked"
+    | "cancel"
+    | "suspend"
+    | "resume"
+    | "review"
+    | "approve"
+    | "reject_submit"
+    | "process"
+    | "submit"
+    | "open"
+    | "delegate"
+    | "block"
   >(null);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [note, setNote] = useState("");
@@ -85,23 +103,44 @@ export default function BriefActions({
     router.refresh();
   };
 
-  const handleEdit = async () => {
+  const startEdit = (mode: "patch" | "update") => {
+    setEditMode(mode);
+    setEditTitle(title);
+    setEditContent(content);
+    setEditPriority(priority);
+    setEditEstimated(estimatedManDays?.toString() || "");
+    setEditExpectedCompletion(expectedCompletionAt ? expectedCompletionAt.slice(0, 16) : "");
+    setEditReason("");
+    setModal("edit");
+  };
+
+  const handleEditSave = async () => {
     if (!isNonEmpty(editTitle) || !isNonEmpty(editContent)) {
       setError("标题和内容不能为空");
       return;
     }
 
+    const payload = {
+      title: editTitle.trim(),
+      content: editContent.trim(),
+      priority: editPriority,
+      estimated_man_days: editEstimated ? parseFloat(editEstimated) : null,
+      expected_completion_at: editExpectedCompletion
+        ? new Date(editExpectedCompletion).toISOString()
+        : null,
+      revision_reason: editReason.trim() || (editMode === "patch" ? "更新内容" : "版本更新"),
+    };
+
+    const path =
+      editMode === "patch"
+        ? `/api/briefs/${briefId}/editing?action=patch`
+        : `/api/briefs/${briefId}/upstream-actions?action=update`;
+
     setLoading(true);
     setError(null);
-    const result = await apiFetch(`/api/briefs/${briefId}`, {
-      method: "PATCH",
-      body: JSON.stringify({
-        title: editTitle.trim(),
-        content: editContent.trim(),
-        priority: editPriority,
-        estimated_man_days: editEstimated ? parseFloat(editEstimated) : null,
-        revision_reason: "更新内容",
-      }),
+    const result = await apiFetch(path, {
+      method: "POST",
+      body: JSON.stringify(payload),
     });
     setLoading(false);
 
@@ -110,8 +149,14 @@ export default function BriefActions({
       return;
     }
 
-    setIsEditing(false);
+    setModal(null);
     router.refresh();
+  };
+
+  const handleReview = async () => {
+    await handleAction(`/api/briefs/${briefId}/editing?action=review`, { note: note.trim() || undefined });
+    setModal(null);
+    setNote("");
   };
 
   const handleSend = async () => {
@@ -120,11 +165,12 @@ export default function BriefActions({
         setError("请选择 downstream 用户");
         return;
       }
-      await handleAction(`/api/briefs/${briefId}/send`, {
+      await handleAction(`/api/briefs/${briefId}/transfer?action=send`, {
         assigned_to: selectedUserId,
         note: note.trim() || undefined,
       });
       resetSendModal();
+      setModal(null);
       return;
     }
 
@@ -155,6 +201,7 @@ export default function BriefActions({
       setInviteResult(result.data.invite);
     } else {
       resetSendModal();
+      setModal(null);
       router.refresh();
     }
   };
@@ -164,42 +211,30 @@ export default function BriefActions({
       setError("请填写拒绝原因");
       return;
     }
-    await handleAction(`/api/briefs/${briefId}/reject`, { reason: reason.trim() });
+    await handleAction(`/api/briefs/${briefId}/transfer?action=reject`, { reason: reason.trim() });
     setModal(null);
     setReason("");
   };
 
-  const handleComplete = async () => {
+  const handleUpstreamReasonAction = async (action: string) => {
     if (!isNonEmpty(reason)) {
-      setError("请填写完成说明");
+      setError("请填写说明");
       return;
     }
-    // First create completion feedback, then mark complete
-    const feedbackResult = await apiFetch(`/api/briefs/${briefId}/feedbacks`, {
-      method: "POST",
-      body: JSON.stringify({
-        type: "completion",
-        content: reason.trim(),
-        attachments: [],
-      }),
-    });
-    if (!feedbackResult.ok) {
-      setError(feedbackResult.message);
-      return;
-    }
-    await handleAction(`/api/briefs/${briefId}/complete`);
-    setModal(null);
-    setReason("");
-  };
-
-  const handleBlocked = async () => {
-    if (!isNonEmpty(reason)) {
-      setError("请填写阻塞原因");
-      return;
-    }
-    await handleAction(`/api/briefs/${briefId}/feedbacks`, {
-      type: "blocked",
+    await handleAction(`/api/briefs/${briefId}/upstream-actions?action=${action}`, {
       content: reason.trim(),
+    });
+    setModal(null);
+    setReason("");
+  };
+
+  const handleDownstreamAction = async (action: string, requireReason: boolean) => {
+    if (requireReason && !isNonEmpty(reason)) {
+      setError("请填写说明");
+      return;
+    }
+    await handleAction(`/api/briefs/${briefId}/downstream-actions?action=${action}`, {
+      content: reason.trim() || undefined,
       attachments: [],
     });
     setModal(null);
@@ -235,27 +270,119 @@ export default function BriefActions({
     }
   };
 
+  const modalTitle = () => {
+    switch (modal) {
+      case "send":
+        return "发送给 downstream";
+      case "edit":
+        return editMode === "patch" ? "编辑 Brief" : "更新版本";
+      case "review":
+        return "提交审查";
+      case "reject":
+        return "拒绝 Brief";
+      case "cancel":
+        return "取消 Brief";
+      case "suspend":
+        return "暂停 Brief";
+      case "resume":
+        return "恢复 Brief";
+      case "approve":
+        return "确认完成";
+      case "reject_submit":
+        return "打回完成";
+      case "process":
+        return "进度更新";
+      case "submit":
+        return "提交完成";
+      case "open":
+        return "重新打开";
+      case "delegate":
+        return "委托说明";
+      case "block":
+        return "标记阻塞";
+      default:
+        return "";
+    }
+  };
+
   const renderModal = () => {
     if (!modal) return null;
 
     return (
       <div className="modal-overlay" onClick={closeModal}>
-        <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className={`modal-card ${modal === "edit" ? "modal-wide" : ""}`} onClick={(e) => e.stopPropagation()}>
           <div className="modal-header">
-            <h3>
-              {modal === "send"
-                ? "发送给 downstream"
-                : modal === "reject"
-                  ? "拒绝 Brief"
-                  : modal === "complete"
-                    ? "标记完成"
-                    : "标记阻塞"}
-            </h3>
+            <h3>{modalTitle()}</h3>
             <button className="btn btn-sm" onClick={closeModal}>关闭</button>
           </div>
 
           <div className="modal-body">
             {error && <div className="error-message mb-12">{error}</div>}
+
+            {modal === "edit" && (
+              <>
+                <div className="form-group">
+                  <label className="form-label">标题</label>
+                  <input
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    disabled={loading}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">内容</label>
+                  <textarea
+                    value={editContent}
+                    onChange={(e) => setEditContent(e.target.value)}
+                    rows={10}
+                    disabled={loading}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">优先级</label>
+                  <select
+                    value={editPriority}
+                    onChange={(e) => setEditPriority(e.target.value)}
+                    disabled={loading}
+                  >
+                    <option value="p0">P0</option>
+                    <option value="p1">P1</option>
+                    <option value="p2">P2</option>
+                    <option value="p3">P3</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">预估人天</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={editEstimated}
+                    onChange={(e) => setEditEstimated(e.target.value)}
+                    disabled={loading}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">预期完成时间</label>
+                  <input
+                    type="datetime-local"
+                    value={editExpectedCompletion}
+                    onChange={(e) => setEditExpectedCompletion(e.target.value)}
+                    disabled={loading}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">变更原因</label>
+                  <input
+                    type="text"
+                    value={editReason}
+                    onChange={(e) => setEditReason(e.target.value)}
+                    placeholder={editMode === "patch" ? "更新内容" : "版本更新原因"}
+                    disabled={loading}
+                  />
+                </div>
+              </>
+            )}
 
             {modal === "send" && !inviteResult && (
               <>
@@ -348,14 +475,55 @@ export default function BriefActions({
               </div>
             )}
 
-            {(modal === "reject" || modal === "complete" || modal === "blocked") && (
+            {modal === "process" && (
+              <div className="form-group">
+                <label className="form-label">进度说明（可选）</label>
+                <textarea
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  rows={5}
+                  placeholder="填写最新进度..."
+                />
+              </div>
+            )}
+
+            {[
+              "review",
+              "reject",
+              "cancel",
+              "suspend",
+              "resume",
+              "approve",
+              "reject_submit",
+              "submit",
+              "open",
+              "delegate",
+              "block",
+            ].includes(modal) && (
               <div className="form-group">
                 <label className="form-label">
-                  {modal === "reject"
-                    ? "拒绝原因"
-                    : modal === "complete"
-                      ? "完成说明"
-                      : "阻塞原因"}
+                  {modal === "review"
+                    ? "审查备注"
+                    : modal === "reject"
+                      ? "拒绝原因"
+                      : modal === "cancel"
+                      ? "取消原因"
+                      : modal === "suspend"
+                        ? "暂停原因"
+                        : modal === "resume"
+                          ? "恢复原因"
+                          : modal === "approve"
+                            ? "确认备注"
+                            : modal === "reject_submit"
+                              ? "打回原因"
+                              : modal === "submit"
+                                ? "完成说明"
+                                : modal === "open"
+                                  ? "重新打开原因"
+                                  : modal === "delegate"
+                                    ? "委托说明"
+                                    : "阻塞原因"}
+                  {modal !== "delegate" && modal !== "approve" && modal !== "review" && " *"}
                 </label>
                 <textarea
                   value={reason}
@@ -374,15 +542,18 @@ export default function BriefActions({
             {!(modal === "send" && inviteResult) && (
               <button
                 className="btn btn-primary"
-                onClick={
-                  modal === "send"
-                    ? handleSend
-                    : modal === "reject"
-                      ? handleReject
-                      : modal === "complete"
-                        ? handleComplete
-                        : handleBlocked
-                }
+                onClick={() => {
+                  if (modal === "edit") return handleEditSave();
+                  if (modal === "send") return handleSend();
+                  if (modal === "review") return handleReview();
+                  if (modal === "reject") return handleReject();
+                  if (modal === "process") return handleDownstreamAction("process", false);
+                  if (modal === "submit") return handleDownstreamAction("submit", true);
+                  if (modal === "open") return handleDownstreamAction("open", true);
+                  if (modal === "delegate") return handleDownstreamAction("delegate", false);
+                  if (modal === "block") return handleDownstreamAction("block", true);
+                  return handleUpstreamReasonAction(modal);
+                }}
                 disabled={loading}
               >
                 {loading ? "提交中..." : "确认"}
@@ -405,74 +576,17 @@ export default function BriefActions({
     );
   };
 
-  if (isEditing) {
-    return (
-      <div className="card mb-16">
-        {error && <div className="error-message mb-12">{error}</div>}
-        <div className="form-group">
-          <label className="form-label">标题</label>
-          <input
-            value={editTitle}
-            onChange={(e) => setEditTitle(e.target.value)}
-            disabled={loading}
-          />
-        </div>
-        <div className="form-group">
-          <label className="form-label">内容</label>
-          <textarea
-            value={editContent}
-            onChange={(e) => setEditContent(e.target.value)}
-            rows={6}
-            disabled={loading}
-          />
-        </div>
-        <div className="form-group">
-          <label className="form-label">优先级</label>
-          <select
-            value={editPriority}
-            onChange={(e) => setEditPriority(e.target.value)}
-            disabled={loading}
-          >
-            <option value="p0">P0</option>
-            <option value="p1">P1</option>
-            <option value="p2">P2</option>
-            <option value="p3">P3</option>
-          </select>
-        </div>
-        <div className="form-group">
-          <label className="form-label">预估人天</label>
-          <input
-            type="number"
-            min="0"
-            step="0.5"
-            value={editEstimated}
-            onChange={(e) => setEditEstimated(e.target.value)}
-            disabled={loading}
-          />
-        </div>
-        <div className="flex gap-8">
-          <button className="btn" onClick={() => setIsEditing(false)} disabled={loading}>
-            取消
-          </button>
-          <button className="btn btn-primary" onClick={handleEdit} disabled={loading}>
-            {loading ? "保存中..." : "保存"}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <>
-      <div className="flex gap-8">
-        {isCreator && status === "draft" && (
+      <div className="flex gap-8 flex-wrap">
+        {isCreator && upstreamState === "editing" && currentVersionStatus === "draft" && (
           <>
-            <button className="btn btn-sm" onClick={() => setIsEditing(true)}>
+            <button className="btn btn-sm" onClick={() => startEdit("patch")}>
               编辑
             </button>
             <button
               className="btn btn-sm btn-primary"
-              onClick={() => handleAction(`/api/briefs/${briefId}/submit`)}
+              onClick={() => setModal("review")}
               disabled={loading}
             >
               提交审查
@@ -480,7 +594,7 @@ export default function BriefActions({
           </>
         )}
 
-        {isCreator && status === "reviewed" && (
+        {isCreator && currentVersionStatus === "reviewed" && (
           <button
             className="btn btn-sm btn-primary"
             onClick={() => setModal("send")}
@@ -490,11 +604,11 @@ export default function BriefActions({
           </button>
         )}
 
-        {isAssignee && status === "sent" && (
+        {isAssignee && upstreamState === "sent" && (
           <>
             <button
               className="btn btn-sm btn-primary"
-              onClick={() => handleAction(`/api/briefs/${briefId}/accept`)}
+              onClick={() => handleAction(`/api/briefs/${briefId}/transfer?action=accept`)}
               disabled={loading}
             >
               接受
@@ -509,23 +623,118 @@ export default function BriefActions({
           </>
         )}
 
-        {isAssignee && status === "accepted" && (
+        {isCreator && upstreamState === "in_process" && downstreamState === "submitted" && (
           <>
             <button
               className="btn btn-sm btn-primary"
-              onClick={() => setModal("complete")}
+              onClick={() => setModal("approve")}
               disabled={loading}
             >
-              标记完成
+              确认完成
             </button>
             <button
               className="btn btn-sm btn-danger"
-              onClick={() => setModal("blocked")}
+              onClick={() => setModal("reject_submit")}
               disabled={loading}
             >
-              标记阻塞
+              打回
+            </button>
+            <button
+              className="btn btn-sm"
+              onClick={() => startEdit("update")}
+              disabled={loading}
+            >
+              更新版本
             </button>
           </>
+        )}
+
+        {isCreator && upstreamState === "in_process" && downstreamState !== "submitted" && (
+          <button
+            className="btn btn-sm"
+            onClick={() => startEdit("update")}
+            disabled={loading}
+          >
+            更新版本
+          </button>
+        )}
+
+        {isAssignee && upstreamState === "in_process" && (
+          <>
+            <button
+              className="btn btn-sm"
+              onClick={() => setModal("process")}
+              disabled={loading}
+            >
+              进度更新
+            </button>
+            {downstreamState !== "submitted" && (
+              <button
+                className="btn btn-sm btn-primary"
+                onClick={() => setModal("submit")}
+                disabled={loading}
+              >
+                提交完成
+              </button>
+            )}
+            {(downstreamState === "submitted" || downstreamState === "delegated" || downstreamState === "blocked") && (
+              <button
+                className="btn btn-sm"
+                onClick={() => setModal("open")}
+                disabled={loading}
+              >
+                重新打开
+              </button>
+            )}
+            <button
+              className="btn btn-sm"
+              onClick={() => setModal("delegate")}
+              disabled={loading}
+            >
+              委托
+            </button>
+            <button
+              className="btn btn-sm btn-danger"
+              onClick={() => setModal("block")}
+              disabled={loading}
+            >
+              阻塞
+            </button>
+          </>
+        )}
+
+        {isCreator && ["sent", "in_process"].includes(upstreamState) && (
+          <>
+            <button
+              className="btn btn-sm"
+              onClick={() => setModal("suspend")}
+              disabled={loading}
+            >
+              暂停
+            </button>
+          </>
+        )}
+
+        {isCreator && upstreamState === "suspended" && (
+          <>
+            <button
+              className="btn btn-sm btn-primary"
+              onClick={() => setModal("resume")}
+              disabled={loading}
+            >
+              恢复
+            </button>
+          </>
+        )}
+
+        {isCreator && !["done", "cancelled"].includes(upstreamState) && (
+          <button
+            className="btn btn-sm btn-danger"
+            onClick={() => setModal("cancel")}
+            disabled={loading}
+          >
+            取消
+          </button>
         )}
       </div>
       {renderModal()}

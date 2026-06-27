@@ -26,6 +26,7 @@ After sending to a temporary user, the system SHALL display the invite link retu
 
 #### Scenario: Successful send to temporary user
 - **WHEN** the creator submits the temporary user send form
+- **THEN** the system calls `POST /api/v1/briefs/[brief_id]/transfer?action=send` with `is_temporary_user` true and the recipient details
 - **AND** the backend returns an invite URL
 - **THEN** the dialog shows the invite link
 - **AND** the creator can copy the link to the clipboard

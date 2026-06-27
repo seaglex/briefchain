@@ -18,12 +18,34 @@ The invite page SHALL display the Brief details using the same component as the 
 - **AND** the Brief detail matches the data returned by `GET /invites/{token}`
 
 ### Requirement: Public invite page hides creator-only actions
-The Brief detail component on the invite page SHALL hide actions that are only relevant to the creator, such as send, edit, or submit.
+The Brief detail component on the invite page SHALL hide actions that are only relevant to the creator, such as edit, review, send, cancel, suspend, resume, approve, reject_submit, and update.
 
 #### Scenario: Creator actions are hidden
 - **WHEN** the Brief detail is rendered in invite view mode
-- **THEN** send, edit, and submit buttons are not visible
-- **AND** accept, reject, block, and complete action controls are rendered separately by the invite page
+- **THEN** creator-only buttons are not visible
+- **AND** recipient action controls (accept, reject, submit, block, open, delegate) are rendered separately by the invite page
+
+### Requirement: Public invite page supports transfer-phase actions
+The system SHALL allow the recipient to accept or reject the brief while `upstream_state` is "sent".
+
+#### Scenario: Accept invite
+- **WHEN** the recipient clicks "接受"
+- **THEN** the system calls the token-based accept endpoint, refreshes the brief, and shows `upstream_state` as "in_process" and `downstream_state` as "opened"
+
+#### Scenario: Reject invite
+- **WHEN** the recipient clicks "拒绝" and enters a reason
+- **THEN** the system calls the token-based reject endpoint, refreshes the brief, and shows `upstream_state` as "editing"
+
+### Requirement: Public invite page supports downstream actions
+The system SHALL allow the recipient to perform downstream actions after accepting the brief.
+
+#### Scenario: Submit completion
+- **WHEN** the recipient clicks "提交完成" and enters completion notes
+- **THEN** the system calls the token-based submit endpoint, refreshes the brief, and shows `downstream_state` as "submitted"
+
+#### Scenario: Block brief
+- **WHEN** the recipient clicks "标记阻塞" and enters a blocker reason
+- **THEN** the system calls the token-based block endpoint, refreshes the brief, and shows `downstream_state` as "blocked"
 
 ### Requirement: Invalid or expired invites show an error
 The invite page SHALL display a clear error when the token is invalid, expired, or invalidated.

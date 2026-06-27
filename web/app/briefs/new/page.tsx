@@ -11,6 +11,7 @@ export default function NewBriefPage() {
   const [content, setContent] = useState("");
   const [priority, setPriority] = useState("p2");
   const [estimatedManDays, setEstimatedManDays] = useState("");
+  const [expectedCompletionAt, setExpectedCompletionAt] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -39,6 +40,9 @@ export default function NewBriefPage() {
         content: content.trim(),
         priority,
         estimated_man_days: estimatedManDays ? parseFloat(estimatedManDays) : null,
+        expected_completion_at: expectedCompletionAt
+          ? new Date(expectedCompletionAt).toISOString()
+          : null,
         attachments: [],
       }),
     });
@@ -114,6 +118,17 @@ export default function NewBriefPage() {
                   placeholder="例如：3"
                   value={estimatedManDays}
                   onChange={(e) => setEstimatedManDays(e.target.value)}
+                  disabled={loading}
+                />
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="expected_completion_at" className="form-label">预期完成时间</label>
+                <input
+                  id="expected_completion_at"
+                  type="datetime-local"
+                  value={expectedCompletionAt}
+                  onChange={(e) => setExpectedCompletionAt(e.target.value)}
                   disabled={loading}
                 />
               </div>

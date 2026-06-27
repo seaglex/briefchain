@@ -11,11 +11,13 @@ import BriefDetailView, {
 import {
   acceptInvite,
   blockInvite,
-  doneInvite,
+  delegateInvite,
   getInvite,
   getInviteFeedbacks,
   getInviteTransfers,
+  openInvite,
   rejectInvite,
+  submitInvite,
 } from "@/lib/invites";
 
 interface ApiError {
@@ -132,7 +134,7 @@ export default function InvitePage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionReason, setActionReason] = useState("");
-  const [actionMode, setActionMode] = useState<"reject" | "complete" | "blocked" | null>(null);
+  const [actionMode, setActionMode] = useState<"reject" | "submit" | "block" | "open" | "delegate" | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -163,6 +165,21 @@ export default function InvitePage() {
     load();
   }, [token]);
 
+  const reload = async () => {
+    const [inviteResult, transfersResult, feedbacksResult] = await Promise.all([
+      getInvite(token),
+      getInviteTransfers(token),
+      getInviteFeedbacks(token),
+    ]);
+
+    if (inviteResult.ok) {
+      setBrief(inviteResult.data.brief);
+      setInvite(inviteResult.data.invite);
+    }
+    setTransfers(transfersResult.ok ? transfersResult.data : []);
+    setFeedbacks(feedbacksResult.ok ? feedbacksResult.data : []);
+  };
+
   const handleAccept = async () => {
     setActionLoading(true);
     setActionError(null);
@@ -172,7 +189,7 @@ export default function InvitePage() {
       setActionError(result.message);
       return;
     }
-    window.location.reload();
+    await reload();
   };
 
   const handleReject = async () => {
@@ -188,7 +205,9 @@ export default function InvitePage() {
       setActionError(result.message);
       return;
     }
-    window.location.reload();
+    setActionMode(null);
+    setActionReason("");
+    await reload();
   };
 
   const handleBlock = async () => {
@@ -204,29 +223,65 @@ export default function InvitePage() {
       setActionError(result.message);
       return;
     }
-    window.location.reload();
+    setActionMode(null);
+    setActionReason("");
+    await reload();
   };
 
-  const handleDone = async () => {
+  const handleSubmit = async () => {
     if (!actionReason.trim()) {
       setActionError("请填写完成说明");
       return;
     }
     setActionLoading(true);
     setActionError(null);
-    const result = await doneInvite(token, { result: actionReason.trim() });
+    const result = await submitInvite(token, { content: actionReason.trim() });
     setActionLoading(false);
     if (!result.ok) {
       setActionError(result.message);
       return;
     }
-    window.location.reload();
+    setActionMode(null);
+    setActionReason("");
+    await reload();
+  };
+
+  const handleOpen = async () => {
+    if (!actionReason.trim()) {
+      setActionError("请填写重新打开原因");
+      return;
+    }
+    setActionLoading(true);
+    setActionError(null);
+    const result = await openInvite(token, { reason: actionReason.trim() });
+    setActionLoading(false);
+    if (!result.ok) {
+      setActionError(result.message);
+      return;
+    }
+    setActionMode(null);
+    setActionReason("");
+    await reload();
+  };
+
+  const handleDelegate = async () => {
+    setActionLoading(true);
+    setActionError(null);
+    const result = await delegateInvite(token, { content: actionReason.trim() || undefined });
+    setActionLoading(false);
+    if (!result.ok) {
+      setActionError(result.message);
+      return;
+    }
+    setActionMode(null);
+    setActionReason("");
+    await reload();
   };
 
   const renderActionControls = () => {
     if (!brief) return null;
 
-    if (brief.status === "sent") {
+    if (brief.upstream_state === "sent") {
       return (
         <div className="card mt-16">
           {actionError && <div className="error-message mb-12">{actionError}</div>}
@@ -271,27 +326,46 @@ export default function InvitePage() {
       );
     }
 
-    if (brief.status === "accepted") {
+    if (brief.upstream_state === "in_process") {
+      const downstream = brief.downstream_state;
       return (
         <div className="card mt-16">
           {actionError && <div className="error-message mb-12">{actionError}</div>}
-          <div className="flex gap-8">
+          <div className="flex gap-8 flex-wrap">
+            {downstream !== "submitted" && (
+              <button
+                className="btn btn-primary"
+                onClick={() => setActionMode("submit")}
+                disabled={actionLoading}
+              >
+                提交完成
+              </button>
+            )}
+            {(downstream === "submitted" || downstream === "delegated" || downstream === "blocked") && (
+              <button
+                className="btn"
+                onClick={() => setActionMode("open")}
+                disabled={actionLoading}
+              >
+                重新打开
+              </button>
+            )}
             <button
-              className="btn btn-primary"
-              onClick={() => setActionMode("complete")}
+              className="btn"
+              onClick={() => setActionMode("delegate")}
               disabled={actionLoading}
             >
-              标记完成
+              委托
             </button>
             <button
               className="btn btn-danger"
-              onClick={() => setActionMode("blocked")}
+              onClick={() => setActionMode("block")}
               disabled={actionLoading}
             >
-              标记阻塞
+              阻塞
             </button>
           </div>
-          {actionMode === "complete" && (
+          {actionMode === "submit" && (
             <div className="mt-12">
               <div className="form-group">
                 <label className="form-label">完成说明</label>
@@ -306,13 +380,55 @@ export default function InvitePage() {
                 <button className="btn" onClick={() => { setActionMode(null); setActionReason(""); setActionError(null); }} disabled={actionLoading}>
                   取消
                 </button>
-                <button className="btn btn-primary" onClick={handleDone} disabled={actionLoading}>
+                <button className="btn btn-primary" onClick={handleSubmit} disabled={actionLoading}>
                   {actionLoading ? "提交中..." : "确认完成"}
                 </button>
               </div>
             </div>
           )}
-          {actionMode === "blocked" && (
+          {actionMode === "open" && (
+            <div className="mt-12">
+              <div className="form-group">
+                <label className="form-label">重新打开原因</label>
+                <textarea
+                  value={actionReason}
+                  onChange={(e) => setActionReason(e.target.value)}
+                  rows={4}
+                  placeholder="请填写重新打开原因"
+                />
+              </div>
+              <div className="flex gap-8">
+                <button className="btn" onClick={() => { setActionMode(null); setActionReason(""); setActionError(null); }} disabled={actionLoading}>
+                  取消
+                </button>
+                <button className="btn btn-primary" onClick={handleOpen} disabled={actionLoading}>
+                  {actionLoading ? "提交中..." : "确认打开"}
+                </button>
+              </div>
+            </div>
+          )}
+          {actionMode === "delegate" && (
+            <div className="mt-12">
+              <div className="form-group">
+                <label className="form-label">委托说明（可选）</label>
+                <textarea
+                  value={actionReason}
+                  onChange={(e) => setActionReason(e.target.value)}
+                  rows={4}
+                  placeholder="请填写委托说明"
+                />
+              </div>
+              <div className="flex gap-8">
+                <button className="btn" onClick={() => { setActionMode(null); setActionReason(""); setActionError(null); }} disabled={actionLoading}>
+                  取消
+                </button>
+                <button className="btn btn-primary" onClick={handleDelegate} disabled={actionLoading}>
+                  {actionLoading ? "提交中..." : "确认委托"}
+                </button>
+              </div>
+            </div>
+          )}
+          {actionMode === "block" && (
             <div className="mt-12">
               <div className="form-group">
                 <label className="form-label">阻塞原因</label>

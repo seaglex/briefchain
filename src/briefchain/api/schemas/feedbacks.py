@@ -17,7 +17,11 @@ class UserRef(BaseModel):
 
 
 class FeedbackCreateRequest(BaseModel):
-    """Request body for creating feedback."""
+    """Request body for creating feedback.
+
+    Deprecated in the public API: feedbacks are now created by lifecycle endpoints.
+    Kept for internal service use.
+    """
 
     type: FeedbackType
     content: str = Field(..., min_length=1)
@@ -30,16 +34,21 @@ class FeedbackListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
+    brief_id: UUID
+    brief_version: int
+    is_to_down: bool
     type: FeedbackType
-    from_user: UserRef
+    from_user_id: UUID
+    from_user_name: str
+    to_user_id: UUID
+    to_user_name: str
     created_at: str
 
 
 class FeedbackDetail(FeedbackListItem):
     """Feedback detail mode response."""
 
-    brief_id: UUID
-    brief_version: int
     content: str
     attachments: list[dict]
+    is_auto_generated: bool
     confirmed_at: str | None
