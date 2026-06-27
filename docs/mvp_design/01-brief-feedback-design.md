@@ -189,6 +189,7 @@ briefs {
 
   status_changed_at: timestamp -- 最后一次状态变更时间（agent 估算进展用）
   status_changed_by: GUID     -- 最后一次状态变更的操作人
+  status_changed_by_name: string -- 冗余：最后一次状态变更操作人的名字快照
 
   created_at: timestamp
   updated_at: timestamp
@@ -201,7 +202,7 @@ briefs {
 - **双状态替代单状态 + previous_status**：原来 `status`（11 enum）+ `previous_status` → 现在 `upstream_state`（6 enum）+ `downstream_state`（4 enum + null）。suspend 只改 upstream_state，downstream_state 自然保留，resume 原样恢复，不再需要 previous_status
 - `status_changed_at` 区分"内容改了"和"状态变了"，agent 估算 sub-tree 进展时需要知道每个子 brief 停在某个状态多久了
 - briefs 表只管"当前状态"，状态变更的原因和历史都在 feedbacks 表查
-- **冗余人名字段**：`created_by_name` / `assigned_to_name` 在创建/分配时从 users 表读取并写入，列表查询不需要 JOIN。合约语义上，名字是操作时的快照——"当时签合约的人叫什么"，不是实时值。如果用户改名，合约上的名字不变（除非主动触发同步）
+- **冗余人名字段**：`created_by_name` / `assigned_to_name` / `status_changed_by_name` 在创建/分配/状态变更时从 users 表读取并写入，列表查询不需要 JOIN。合约语义上，名字是操作时的快照——"当时签合约的人叫什么"，不是实时值。如果用户改名，合约上的名字不变（除非主动触发同步）
 
 **版本字段说明：**
 - `current_version` 是权威字段，语义为"最新 sent（正式）版本号"。初始值为 `null`（还没 sent 任何版本）；只有该版本被 sent 后才更新为版本号。所有读取方直接用 briefs 表，不需要 JOIN 版本表再筛选
@@ -241,6 +242,7 @@ brief_versions {
   revision_reason: string      -- 修改原因，自由文本
 
   modified_by: GUID
+  modified_by_name: string    -- 冗余：修改人名字快照
   modified_at: timestamp       -- brief 内容修改时间
   change_summary: string       -- LLM 自动生成 + 人工确认
 

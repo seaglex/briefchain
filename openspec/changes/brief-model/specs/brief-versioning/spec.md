@@ -1,11 +1,11 @@
 ## ADDED Requirements
 
 ### Requirement: Brief version stores a full content snapshot and lifecycle status
-The system SHALL provide a `BriefVersion` SQLAlchemy model that stores the brief identifier, version number, lifecycle status, title, content, attachments, priority, estimated man-days, expected completion time, associated arbiter review, upstream-change flag, revision reason, modifier, modification time, change summary, and timestamps.
+The system SHALL provide a `BriefVersion` SQLAlchemy model that stores the brief identifier, version number, lifecycle status, title, content, attachments, priority, estimated man-days, expected completion time, associated arbiter review, upstream-change flag, revision reason, modifier identifier and name snapshot, modification time, change summary, and timestamps.
 
 #### Scenario: Create initial version
 - **WHEN** a brief is created
-- **THEN** a `BriefVersion` row is inserted with `version` equal to 1, `status` set to "draft", `is_upstream_changed` set to false, and `revision_reason` set to "initial"
+- **THEN** a `BriefVersion` row is inserted with `version` equal to 1, `status` set to "draft", `is_upstream_changed` set to false, `revision_reason` set to "initial", `modified_by` set to the upstream user's id, and `modified_by_name` set to the upstream user's name at creation time
 
 #### Scenario: Update brief content creates a new draft version
 - **WHEN** an upstream user updates the title or content of a draft brief

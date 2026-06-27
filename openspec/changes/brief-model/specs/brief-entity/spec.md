@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Brief entity stores tree structure and dual lifecycle state
-The system SHALL provide a `Brief` SQLAlchemy model that stores the brief identifier, root identifier, parent identifier, current sent version, upstream state, downstream state, denormalized title and priority, expected completion time, creator and assignee identifiers and name snapshots, state-change tracking, and timestamps.
+The system SHALL provide a `Brief` SQLAlchemy model that stores the brief identifier, root identifier, parent identifier, current sent version, upstream state, downstream state, denormalized title and priority, expected completion time, creator and assignee identifiers and name snapshots, state-change tracking with operator name snapshot, and timestamps.
 
 #### Scenario: Create a root brief
 - **WHEN** an upstream user creates a root brief
@@ -40,11 +40,11 @@ The system SHALL store `created_by_name` and `assigned_to_name` as the user's na
 - **THEN** `assigned_to` is set to the downstream user id and `assigned_to_name` is set to the downstream user's name at assignment time
 
 ### Requirement: Brief tracks the last state change
-The system SHALL store `status_changed_at` and `status_changed_by` to record when and by whom the brief's state was last changed.
+The system SHALL store `status_changed_at`, `status_changed_by`, and `status_changed_by_name` to record when, by whom, and by what name the brief's state was last changed.
 
 #### Scenario: Accept a sent brief
 - **WHEN** a downstream user accepts a sent brief
-- **THEN** `status_changed_at` is updated to the current time and `status_changed_by` is set to the downstream user's id
+- **THEN** `status_changed_at` is updated to the current time, `status_changed_by` is set to the downstream user's id, and `status_changed_by_name` is set to the downstream user's name at that time
 
 ### Requirement: Brief relationships are navigable
 The system SHALL define SQLAlchemy relationships from `Brief` to its parent, children, versions, transfer history, feedback, chain, and arbiter reviews.
