@@ -26,6 +26,22 @@ def other_user(db_session: Session) -> User:
     return user
 
 
+@pytest.fixture
+def temporary_user(db_session: Session) -> User:
+    """Create a temporary user that should not appear in the public list."""
+    user = User(
+        id=UUID("33333333-3333-3333-3333-333333333333"),
+        email=None,
+        phone=None,
+        name="Temporary User",
+        user_type=UserType.TEMPORARY,
+        password_hash=None,
+    )
+    db_session.add(user)
+    db_session.commit()
+    return user
+
+
 def test_list_users_returns_masked_fields(
     client: TestClient,
     auth_headers: dict[str, str],
@@ -41,6 +57,22 @@ def test_list_users_returns_masked_fields(
     other = next(item for item in data["items"] if item["id"] == str(other_user.id))
     assert other["email"] == "***@example.com"
     assert other["phone"] == "+86****2222"
+
+
+def test_list_users_excludes_temporary_users(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    other_user: User,
+    temporary_user: User,
+) -> None:
+    """The user list must not expose temporary users."""
+    response = client.get("/api/v1/users", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.json()
+    returned_ids = {item["id"] for item in data["items"]}
+    assert str(other_user.id) in returned_ids
+    assert str(temporary_user.id) not in returned_ids
 
 
 def test_list_users_pagination(client: TestClient, auth_headers: dict[str, str]) -> None:

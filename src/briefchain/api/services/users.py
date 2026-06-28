@@ -224,10 +224,6 @@ def login_user(session: Session, request: LoginRequest) -> AuthResponse:
             status_code=401,
         )
 
-    print("--------------------------")
-    print(request.invite_token)
-    print(user.name, user.user_type)
-
     linked_temporary_user: UUID | None = None
     if request.invite_token is not None:
         invite = _get_invite_from_token(session, request.invite_token)
@@ -269,15 +265,27 @@ def list_users(
     page: int,
     page_size: int,
 ) -> UserListResponse:
-    """Return a paginated list of users with masked sensitive fields."""
+    """Return a paginated list of registered users with masked sensitive fields.
+
+    Temporary users are excluded because they should not be discoverable in
+    the public user list.
+    """
     page = max(1, page)
     page_size = max(1, min(page_size, 100))
 
-    total = session.execute(select(func.count()).select_from(User)).scalar() or 0
+    total = (
+        session.execute(
+            select(func.count())
+            .select_from(User)
+            .where(User.user_type != UserType.TEMPORARY)
+        ).scalar()
+        or 0
+    )
 
     users = (
         session.execute(
             select(User)
+            .where(User.user_type != UserType.TEMPORARY)
             .order_by(User.created_at.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)
