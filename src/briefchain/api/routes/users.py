@@ -2,13 +2,17 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
-from briefchain.api.dependencies import CurrentUserDep, SessionDep
+from briefchain.api.dependencies import CurrentUserDep, SessionDep, get_current_user_id
 from briefchain.api.schemas.users import UserListResponse, UserResponse
 from briefchain.api.services.users import get_user_by_id, list_users
 
-router = APIRouter(prefix="/users", tags=["users"])
+router = APIRouter(
+    prefix="/users",
+    tags=["users"],
+    dependencies=[Depends(get_current_user_id)],
+)
 
 
 @router.get("", response_model=UserListResponse)

@@ -3,13 +3,17 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
-from briefchain.api.dependencies import CurrentUserIdDep, SessionDep
+from briefchain.api.dependencies import CurrentUserIdDep, SessionDep, get_current_user_id
 from briefchain.api.schemas.chains import ChainDetail
 from briefchain.api.services import briefs as brief_service
 
-router = APIRouter(prefix="/chains", tags=["chains"])
+router = APIRouter(
+    prefix="/chains",
+    tags=["chains"],
+    dependencies=[Depends(get_current_user_id)],
+)
 
 
 @router.get("")

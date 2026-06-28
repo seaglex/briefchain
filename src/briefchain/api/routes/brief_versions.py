@@ -2,12 +2,16 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
-from briefchain.api.dependencies import SessionDep
+from briefchain.api.dependencies import SessionDep, get_current_user_id
 from briefchain.api.services import briefs as brief_service
 
-router = APIRouter(prefix="/briefs", tags=["brief-versions"])
+router = APIRouter(
+    prefix="/briefs",
+    tags=["brief-versions"],
+    dependencies=[Depends(get_current_user_id)],
+)
 
 
 @router.get("/{brief_id}/versions")

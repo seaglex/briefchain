@@ -3,14 +3,22 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
-from briefchain.api.dependencies import SessionDep
+from briefchain.api.dependencies import SessionDep, get_current_user_id
 from briefchain.api.schemas.feedbacks import FeedbackDetail, FeedbackListItem
 from briefchain.api.services import feedbacks as feedback_service
 
-brief_router = APIRouter(prefix="/briefs", tags=["brief-feedbacks"])
-feedback_router = APIRouter(prefix="/feedbacks", tags=["feedbacks"])
+brief_router = APIRouter(
+    prefix="/briefs",
+    tags=["brief-feedbacks"],
+    dependencies=[Depends(get_current_user_id)],
+)
+feedback_router = APIRouter(
+    prefix="/feedbacks",
+    tags=["feedbacks"],
+    dependencies=[Depends(get_current_user_id)],
+)
 
 
 @brief_router.get("/{brief_id}/feedbacks", response_model=list[FeedbackListItem])

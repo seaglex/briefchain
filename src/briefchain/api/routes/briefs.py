@@ -3,9 +3,9 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Depends, Query, status
 
-from briefchain.api.dependencies import CurrentUserIdDep, SessionDep
+from briefchain.api.dependencies import CurrentUserIdDep, SessionDep, get_current_user_id
 from briefchain.api.schemas.briefs import (
     BriefCreateRequest,
     BriefDetail,
@@ -21,7 +21,11 @@ from briefchain.api.schemas.briefs import (
 from briefchain.api.services import briefs as brief_service
 from briefchain.models.enums import BriefDownstreamState, BriefUpstreamState
 
-router = APIRouter(prefix="/briefs", tags=["briefs"])
+router = APIRouter(
+    prefix="/briefs",
+    tags=["briefs"],
+    dependencies=[Depends(get_current_user_id)],
+)
 
 
 @router.post("", response_model=BriefDetail, status_code=status.HTTP_201_CREATED)
