@@ -5,7 +5,7 @@ The system SHALL provide a Brief detail page at `/briefs/[brief_id]` that shows 
 
 #### Scenario: Detail page loads
 - **WHEN** an authenticated user navigates to `/briefs/[brief_id]`
-- **THEN** the page displays the brief title, upstream state badge, downstream state badge when present, priority badge, content, creator name, assignee name, timestamps, and a `draft_version` indicator when an editable draft exists
+- **THEN** the page displays the brief title, upstream state badge, downstream state badge when present, priority badge, content, creator name, assignee name, timestamps, and a `unsent_version` indicator when an editable draft exists
 
 ### Requirement: Detail page provides tabbed sections
 The system SHALL provide tabs on the detail page for content, attachments, transfers, and feedbacks.
@@ -26,12 +26,12 @@ The system SHALL display action buttons based on the current user's relationship
 - **THEN** the page shows upstream actions such as edit and submit for review
 
 #### Scenario: Draft version indicator shown
-- **WHEN** the user views a brief where `draft_version` is not `null`
+- **WHEN** the user views a brief where `unsent_version` is not `null`
 - **THEN** the page displays a badge indicating "Draft v{N} available"
 - **AND** the creator sees an edit button to load the draft version content
 
 #### Scenario: Upstream can edit draft from sent or in_process state
-- **WHEN** the current user is the brief creator, `upstream_state` is "sent" or "in_process", and `draft_version` is not `null`
+- **WHEN** the current user is the brief creator, `upstream_state` is "sent" or "in_process", and `unsent_version` is not `null`
 - **THEN** the page shows an edit button that loads the draft version content
 
 #### Scenario: Downstream transfer view

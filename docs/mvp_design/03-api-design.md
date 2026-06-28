@@ -184,7 +184,7 @@ Response 204
 > | 模式 | 包含字段 | 使用场景 |
 > |---|---|---|
 > | **列表模式** | `brief_id`, `title`, `upstream_state`, `downstream_state`, `priority`, `created_by_id`, `created_by_name`, `assigned_to_id`, `assigned_to_name`, `status_changed_by_id`, `status_changed_by_name`, `status_changed_at`, `updated_at` | 2.2 列表查询 |
-> | **详情模式** | 列表模式 + `content`, `attachments`, `current_version`, `draft_version` | 2.3 获取单个 Brief |
+> | **详情模式** | 列表模式 + `content`, `attachments`, `current_version`, `unsent_version` | 2.3 获取单个 Brief |
 > | **版本模式** | 详情模式 + `version`, `is_current` | 2.3 `?version=` 参数 |
 >
 > **人名冗余存储**：所有涉及用户的字段（created_by / assigned_to / from_user / to_user）都冗余存储 name（快照），响应中拆成 `id` + `name` 两个平级字段，不嵌套成对象。需要用户完整信息请调 `GET /users/:user_id`（11.2）。
@@ -287,7 +287,7 @@ Response 200
     "parent_id": null,
     "version": 1,              // 本次返回的版本号
     "is_current": true,         // 是否为当前版本
-    "draft_version": null,      // 当前可编辑的 draft 版本号（null = 无 draft）；前端编辑时自动 load 此版本
+    "unsent_version": null,      // 当前可编辑的 draft 版本号（null = 无 draft）；前端编辑时自动 load 此版本
     "upstream_state": "editing",
     "downstream_state": null,
     "title": "...",
@@ -310,11 +310,11 @@ Response 200
 
 > user_id 从 JWT 解析，有读权限即可访问（created_by 全权限，assigned_to 下游权限，其他人只读）
 > 通过 `?version=` 参数可获取历史版本，无需单独调用版本详情
-> **draft_version 逻辑：**
-> - current_version = null → 返回最新 draft 版本内容，draft_version = 该版本号
-> - current_version = N，存在 N+1 draft → 返回 vN 内容（sent），draft_version = N+1
-> - current_version = N，无更高版本 → 返回 vN 内容，draft_version = null
-> - downstream 只看 current_version 内容（看不到 draft）；upstream 编辑时自动 load draft_version
+> **unsent_version 逻辑：**
+> - current_version = null → 返回最新 draft 版本内容，unsent_version = 该版本号
+> - current_version = N，存在 N+1 draft → 返回 vN 内容（sent），unsent_version = N+1
+> - current_version = N，无更高版本 → 返回 vN 内容，unsent_version = null
+> - downstream 只看 current_version 内容（看不到 draft）；upstream 编辑时自动 load unsent_version
 
 ---
 
@@ -345,7 +345,7 @@ Response 200
     "upstream_state": "editing",    // 不变
     "downstream_state": null,       // 不变
     "current_version": null,        // 不变（patch 不碰 current_version）
-    "draft_version": 1,             // 当前可编辑的 draft 版本号
+    "unsent_version": 1,             // 当前可编辑的 draft 版本号
     "title": "新标题",              // draft 版本的标题（非 briefs.title）
     "priority": "p0",
     "estimated_man_days": 3,
@@ -532,6 +532,7 @@ send 处理两种邀约场景，都记录在 brief_transfer_history：
 
 > user_id 从 JWT 解析，校验 = assigned_to
 > upstream_state: sent → editing；downstream_state: null → null；assigned_to_id/name → null（清除分配）
+> version.status = reviewed
 > 不创建 feedback（邀约阶段的拒绝走 transfer_history，不是合约期通知）
 
 ---

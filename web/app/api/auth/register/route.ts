@@ -7,12 +7,14 @@ export async function POST(request: NextRequest) {
     email?: string;
     phone?: string;
     password?: string;
+    invite_token?: string;
   };
 
   const name = body.name?.trim() || "";
   const email = body.email?.trim() || undefined;
   const phone = body.phone?.trim() || undefined;
   const password = body.password || "";
+  const inviteToken = body.invite_token?.trim();
 
   if (!name || !password) {
     return NextResponse.json(
@@ -38,10 +40,18 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const backendBody: Record<string, string | undefined> = {
+    name,
+    email,
+    phone,
+    password,
+  };
+  if (inviteToken) backendBody.invite_token = inviteToken;
+
   const backendResponse = await fetch(`${API_BASE_URL}/api/v1/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, email, phone, password }),
+    body: JSON.stringify(backendBody),
   });
 
   if (!backendResponse.ok) {

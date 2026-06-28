@@ -49,6 +49,7 @@ def list_feedbacks(
             from_user_name=feedback.from_user_name,
             to_user_id=feedback.to_user,
             to_user_name=feedback.to_user_name,
+            content=feedback.content,
             created_at=_format_time(feedback.created_at),
         )
         for feedback in feedbacks

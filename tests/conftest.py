@@ -149,6 +149,17 @@ def auth_headers_downstream(
 
 
 @pytest.fixture
+def auth_headers_other_user(
+    jwt_secret: str,
+    db_session: Session,
+    other_user: User,
+) -> dict[str, str]:
+    """Return authorization headers for the other user."""
+    token = create_access_token(other_user.id)
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
 def draft_brief(db_session: Session, creator: User) -> Brief:
     """Create a draft brief owned by creator."""
     brief = Brief(

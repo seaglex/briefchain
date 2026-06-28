@@ -24,7 +24,7 @@ export interface BriefDetail {
   current_version_status: string | null;
   version: number;
   is_current: boolean;
-  draft_version: number | null;
+  unsent_version: number | null;
   status_changed_by_id: string;
   status_changed_by_name: string;
   status_changed_at: string;
@@ -62,9 +62,17 @@ interface BriefDetailViewProps {
   brief: BriefDetail;
   transfers: Transfer[];
   feedbacks: Feedback[];
-  actions?: React.ReactNode;
+  actions?: ReactNode;
   readOnly?: boolean;
+  isViewingDraft?: boolean;
+  baseBrief?: BriefDetail | null;
+  isCreator?: boolean;
 }
+
+const truncateTitle = (title: string, maxChars = 10): string => {
+  if (title.length <= maxChars) return title;
+  return `${title.slice(0, maxChars)}...`;
+};
 
 const upstreamStateClass = (stateValue: string): string => {
   const map: Record<string, string> = {
@@ -79,16 +87,6 @@ const upstreamStateClass = (stateValue: string): string => {
   return map[stateValue] || "badge-draft";
 };
 
-const downstreamStateClass = (stateValue: string): string => {
-  const map: Record<string, string> = {
-    opened: "badge-accepted",
-    submitted: "badge-reviewed",
-    delegated: "badge-sent",
-    blocked: "badge-blocked",
-  };
-  return map[stateValue] || "badge-accepted";
-};
-
 const priorityClass = (p: string): string => {
   if (p === "p0" || p === "p1") return "badge-p1";
   if (p === "p2") return "badge-p2";
@@ -101,39 +99,48 @@ export default function BriefDetailView({
   feedbacks,
   actions,
   readOnly,
+  isViewingDraft,
+  baseBrief,
+  isCreator,
 }: BriefDetailViewProps) {
+  const isAssociated = brief.assigned_to_id !== null;
+
   return (
     <div data-readonly={readOnly}>
       <div className="detail-header">
-        <div className="flex items-center gap-12">
-          <h1>{brief.title}</h1>
-          <span className={`badge ${upstreamStateClass(brief.upstream_state)}`}>
-            {brief.upstream_state}
-          </span>
-          {brief.current_version_status && (
-            <span className={`badge ${upstreamStateClass(brief.current_version_status)}`}>
-              {brief.current_version_status}
-            </span>
+        <div className="detail-header-group detail-header-info">
+          <h1 className="detail-title" title={brief.title}>
+            {truncateTitle(brief.title)}
+          </h1>
+
+          {!isViewingDraft && isCreator && baseBrief?.unsent_version && (
+            <a
+              href={`/briefs/${brief.brief_id}?version=${baseBrief.unsent_version}`}
+              className="badge badge-draft version-link"
+            >
+              Draft
+            </a>
           )}
-          {brief.downstream_state && (
-            <span className={`badge ${downstreamStateClass(brief.downstream_state)}`}>
-              {brief.downstream_state}
-            </span>
+
+          {isViewingDraft && (
+            <a
+              href={`/briefs/${brief.brief_id}`}
+              className="badge badge-reviewed version-link"
+            >
+              当前版本
+            </a>
           )}
-          {brief.draft_version && (
-            <span className="badge badge-draft">Draft v{brief.draft_version}</span>
-          )}
+
           <span className={`badge ${priorityClass(brief.priority)}`}>
             {brief.priority.toUpperCase()}
           </span>
+          <span className={`badge ${upstreamStateClass(brief.upstream_state)}`}>
+            {isAssociated
+              ? `${brief.upstream_state} / ${brief.downstream_state || "--"}`
+              : `${brief.upstream_state} (${brief.current_version_status || "--"})`}
+          </span>
         </div>
-        {actions && <div className="flex items-center gap-8">{actions}</div>}
-      </div>
-
-      <div className="detail-tabs">
-        <div className="detail-tab active">内容</div>
-        <div className="detail-tab">流转</div>
-        <div className="detail-tab">Feedback</div>
+        {actions && <div className="detail-header-actions-wrap">{actions}</div>}
       </div>
 
       <div className="card">
@@ -258,6 +265,7 @@ export default function BriefDetailView({
       <div className="mt-16 text-3" style={{ fontSize: 12 }}>
         创建者：{brief.created_by_name} | 执行者：{brief.assigned_to_name || "--"} | 版本：v
         {brief.version}
+        {isViewingDraft && " (Draft)"}
       </div>
     </div>
   );

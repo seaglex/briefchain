@@ -52,7 +52,7 @@ class BriefDetail(BriefListItem):
     current_version_status: BriefVersionStatus | None
     version: int
     is_current: bool
-    draft_version: int | None
+    unsent_version: int | None
     estimated_man_days: float | None
     expected_completion_at: str | None
     created_at: str
@@ -108,6 +108,7 @@ class BriefReviewRequest(BaseModel):
 class BriefUpdateActionRequest(BaseModel):
     """Request body for pushing an updated brief version (upstream-actions update)."""
 
+    version: int = Field(..., ge=1)
     content: str = Field(..., min_length=1)
     title: str | None = Field(default=None, min_length=1, max_length=255)
     attachments: list[dict] | None = None

@@ -17,7 +17,7 @@
 
 ## 3. Schemas
 
-- [x] 3.1 Add optional `temporary_user_id: UUID | None` and `invite_token: str | None` fields to `RegisterRequest` and `LoginRequest` in `src/briefchain/api/schemas/auth.py`
+- [x] 3.1 Add optional `invite_token: str | None` field to `RegisterRequest` and `LoginRequest` in `src/briefchain/api/schemas/auth.py`
 - [x] 3.2 Add `upgraded_from_temporary: bool = False` and `linked_temporary_user: UUID | None = None` fields to `AuthResponse`
 - [x] 3.3 Create `src/briefchain/api/schemas/invites.py` with `InviteViewResponse`, `AcceptInviteRequest`, `RejectInviteRequest`, `BlockedInviteRequest`, `DoneInviteRequest`, and `InviteMetadataResponse`
 - [x] 3.4 Update `SendBriefRequest` to add `is_temporary_user: bool` and make `recipient_email`/`recipient_phone` optional; update route/service to use the new parameter
@@ -54,7 +54,7 @@
 ## 8. Routes
 
 - [x] 8.1 Create `src/briefchain/api/routes/invites.py` with `GET /invites/{token}`, `POST /invites/{token}/transfer?action=accept|reject`, and `POST /invites/{token}/downstream-actions?action=process|submit|open|delegate|block`
-- [x] 8.2 Update `src/briefchain/api/routes/auth.py` to pass `temporary_user_id` and `invite_token` through to service functions
+- [x] 8.2 Update `src/briefchain/api/routes/auth.py` to pass `invite_token` through to service functions
 - [x] 8.3 Update `src/briefchain/api/routes/briefs.py` `send_brief` endpoint to accept the new external-recipient request schema
 - [x] 8.4 Register the invites router in `src/briefchain/api/main.py` at `/api/v1`
 

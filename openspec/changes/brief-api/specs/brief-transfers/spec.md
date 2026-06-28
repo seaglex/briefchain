@@ -1,23 +1,23 @@
 ## ADDED Requirements
 
 ### Requirement: Send brief to downstream
-The system SHALL allow the creator to send a reviewed brief to a downstream user. `send` is the invitation-phase bridge: it transitions the current version to `sent`, synchronizes `briefs.current_version` / `title` / `priority` / `expected_completion_at`, and transitions `upstream_state` to "sent" (or keeps it "sent" when replacing an existing invitation).
+The system SHALL allow the creator to send a reviewed or previously-sent brief to a downstream user. `send` is the invitation-phase bridge: it transitions the current version to `sent`, synchronizes `briefs.current_version` / `title` / `priority` / `expected_completion_at`, and transitions `upstream_state` to "sent" (or keeps it "sent" when replacing an existing invitation).
 
 #### Scenario: Successful send to registered user
 - **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/transfer?action=send` with `is_temporary_user` false and `assigned_to` set to a registered user
-- **THEN** the system verifies the current version status is "reviewed", sets `briefs.upstream_state` to "sent", sets `assigned_to` and `assigned_to_name`, updates `briefs.current_version`, `title`, `priority`, and `expected_completion_at` to the sent version, creates a `BriefTransferHistory` record with `from_user_name` and `to_user_name` snapshots, and returns the brief and transfer
+- **THEN** the system verifies the current version status is "reviewed" or "sent", sets `briefs.upstream_state` to "sent", sets `assigned_to` and `assigned_to_name`, updates `briefs.current_version`, `title`, `priority`, and `expected_completion_at` to the sent version, creates a `BriefTransferHistory` record with `from_user_name` and `to_user_name` snapshots, and returns the brief and transfer
 
 #### Scenario: Successful send to temporary user
 - **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/transfer?action=send` with `is_temporary_user` true and optional recipient contact info
 - **THEN** the system creates or resolves a temporary user, sets `assigned_to` and `assigned_to_name`, sets `upstream_state` to "sent", creates a transfer record with name snapshots, creates a `BriefInvite`, and returns the brief, transfer, and invite details
 
-#### Scenario: Send rejected for non-reviewed version
-- **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/transfer?action=send` when the current version status is not "reviewed"
+#### Scenario: Send rejected for non-sendable version
+- **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/transfer?action=send` when the current version status is not "reviewed" or "sent"
 - **THEN** the system returns a 409 error
 
 #### Scenario: Replacement send keeps upstream_state as sent
-- **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/transfer?action=send` while `upstream_state` is already "sent"
-- **THEN** the system keeps `upstream_state` as "sent", updates `assigned_to` and `assigned_to_name` to the new recipient, creates a new `BriefTransferHistory` record, and returns the brief and transfer
+- **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/transfer?action=send` while `upstream_state` is already "sent" or when `upstream_state` is "editing" after a previous rejection (with the current version still "sent")
+- **THEN** the system keeps `upstream_state` as "sent", transitions the current version to "sent" if it was "reviewed", updates `assigned_to` and `assigned_to_name` to the new recipient, creates a new `BriefTransferHistory` record, and returns the brief and transfer
 
 #### Scenario: Send rejected for non-creator
 - **WHEN** a non-creator sends a POST request to `/api/v1/briefs/:brief_id/transfer?action=send`

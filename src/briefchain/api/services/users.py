@@ -64,38 +64,28 @@ def _find_existing_user(
     return session.execute(select(User).where(filter_clause)).scalars().first()
 
 
-def _require_invite_for_temporary_user(
+def _get_invite_from_token(
     session: Session,
     invite_token: str | None,
-    temporary_user_id: UUID | None,
 ) -> BriefInvite:
-    """Validate an invite token and that it belongs to the expected temporary user.
+    """Validate an invite token and return the corresponding invite record.
 
     Returns:
         The validated BriefInvite record.
 
     Raises:
-        APIError: If the token is missing, invalid, expired, invalidated, or the
-            temporary_user_id does not match.
+        APIError: If the token is missing, invalid, expired, or invalidated.
     """
     from briefchain.api.services import invites as invite_service
 
-    if not invite_token or not temporary_user_id:
+    if not invite_token:
         raise APIError(
             code="INVALID_INVITE_TOKEN",
-            message="invite_token and temporary_user_id are required together",
+            message="invite_token is required",
             status_code=400,
         )
 
-    invite = invite_service.get_invite_by_token(session, invite_token)
-    if invite.temporary_user_id != temporary_user_id:
-        raise APIError(
-            code="INVALID_INVITE_TOKEN",
-            message="temporary_user_id does not match the invite",
-            status_code=400,
-        )
-
-    return invite
+    return invite_service.get_invite_by_token(session, invite_token)
 
 
 def register_user(session: Session, request: RegisterRequest) -> AuthResponse:
@@ -116,11 +106,7 @@ def register_user(session: Session, request: RegisterRequest) -> AuthResponse:
     has_invite = request.invite_token is not None
     if existing is not None:
         if has_invite:
-            invite = _require_invite_for_temporary_user(
-                session,
-                request.invite_token,
-                request.temporary_user_id,
-            )
+            invite = _get_invite_from_token(session, request.invite_token)
             temporary_user = session.get(User, invite.temporary_user_id)
             if temporary_user is None:
                 raise APIError(
@@ -157,11 +143,7 @@ def register_user(session: Session, request: RegisterRequest) -> AuthResponse:
 
     upgraded_from_temporary = False
     if has_invite:
-        invite = _require_invite_for_temporary_user(
-            session,
-            request.invite_token,
-            request.temporary_user_id,
-        )
+        invite = _get_invite_from_token(session, request.invite_token)
         temporary_user = session.get(User, invite.temporary_user_id)
         if temporary_user is None:
             raise APIError(
@@ -242,13 +224,13 @@ def login_user(session: Session, request: LoginRequest) -> AuthResponse:
             status_code=401,
         )
 
+    print("--------------------------")
+    print(request.invite_token)
+    print(user.name, user.user_type)
+
     linked_temporary_user: UUID | None = None
     if request.invite_token is not None:
-        invite = _require_invite_for_temporary_user(
-            session,
-            request.invite_token,
-            request.temporary_user_id,
-        )
+        invite = _get_invite_from_token(session, request.invite_token)
         temporary_user = session.get(User, invite.temporary_user_id)
         if temporary_user is None:
             raise APIError(

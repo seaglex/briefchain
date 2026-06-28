@@ -11,8 +11,8 @@ BriefChain MVP 已具备用户注册/登录、Brief 创建与发送、接受/拒
 **Goals:**
 - `POST /briefs/:brief_id/transfer?action=send` 支持 `is_temporary_user=true`：email/phone 可选；按 users 表查找结果分别走系统内发送、复用临时用户或创建新临时用户。
 - 公开端点 `/invites/{token}/transfer?action=accept|reject` 与 `/invites/{token}/downstream-actions?action=process|submit|open|delegate|block` 支持基于 HMAC Token 的临时用户鉴权。
-- `POST /auth/register` 支持可选 `temporary_user_id` + `invite_token`：找到该 invite 关联的临时用户并原地升级为 `registered`；同时将该临时用户名下所有非 `done` / `cancelled` 的 brief 的 `assigned_to` 迁移到新注册用户。
-- `POST /auth/login` 支持可选 `temporary_user_id` + `invite_token`：将该临时用户名下所有非 `done` / `cancelled` 的 brief 的 `assigned_to` 迁移到已登录用户。
+- `POST /auth/register` 支持可选 `invite_token`：从 token 中提取临时用户并原地升级为 `registered`；同时将该临时用户名下所有非 `done` / `cancelled` 的 brief 的 `assigned_to` 迁移到新注册用户。
+- `POST /auth/login` 支持可选 `invite_token`：从 token 中提取临时用户，将该临时用户名下所有非 `done` / `cancelled` 的 brief 的 `assigned_to` 迁移到已登录用户。
 - 临时用户升级/登录后，关联邀请链接标记失效，避免链接被再次使用。
 - 已发生的历史记录（transfer、feedback）保持原 `to_user`/`from_user` 不变，只修改 Brief 当前归属。
 
@@ -29,12 +29,13 @@ BriefChain MVP 已具备用户注册/登录、Brief 创建与发送、接受/拒
 - **理由**：避免同一联系方式产生多个临时用户；已升级过的临时用户通过 `final_user_id` 指向其正式账号，再次收到邀请时直接派给正式账号。
 - **替代方案**：每次发送都创建新临时用户。这会导致同一邮箱对应多个临时用户行，增加混乱。
 
-### 2. Token 格式使用 `brief_id:nonce:deadline:signature`
-- **选择**：Token 由 `brief_id_hex`、`nonce`、`accept_deadline_epoch`、HMAC-SHA256 签名组成，用 `:` 分隔。
+### 2. Token 格式使用 `brief_id:temporary_user_id:nonce:deadline:signature`
+- **选择**：Token 由 `brief_id_hex`、`temporary_user_id_hex`、`nonce`、`accept_deadline_epoch`、HMAC-SHA256 签名组成，用 `:` 分隔。
 - **理由**：
   - 签名校验无需查 DB，可快速拒绝伪造或篡改。
   - `nonce` 16 字符足够随机且便于做唯一索引；完整签名 64 字符 hex 仅用于校验，不做索引。
   - 过期时间放在 token 中，过期检查无需查 DB。
+  - `temporary_user_id` 编码在 token 中，注册/登录与端点操作无需前端额外传递。
 - **替代方案**：纯随机 UUID 做 token，DB 查索引。这需要每次请求都查 DB 才能校验过期与签名，无法优先拒绝伪造请求。
 
 ### 3. 签名密钥复用 `jwt_secret_key`
@@ -71,7 +72,7 @@ BriefChain MVP 已具备用户注册/登录、Brief 创建与发送、接受/拒
 | Token 伪造导致未授权访问 Brief | HMAC-SHA256 签名 + nonce DB 唯一索引双重校验；Token 包含过期时间。 |
 | 临时用户长期未清理导致 users 表膨胀 | MVP 不自动清理；临时用户行占用极小，可在后续版本评估过期邀请清理策略。 |
 | JWT secret 轮换后旧邀请链接失效 | 轮换 secret 时同步重新生成或迁移 token；MVP 阶段 secret 不频繁轮换。 |
-| 注册/登录时 `invite_token` 与已注册账号邮箱/手机冲突 | 升级前校验 invite 有效且 temporary_user_id 匹配；注册时若邮箱/手机已注册则返回明确错误。 |
+| 注册/登录时 `invite_token` 与已注册账号邮箱/手机冲突 | 升级前校验 invite 有效；注册时若邮箱/手机已注册则返回明确错误。 |
 | 登录接管时多个 Brief 同时指向同一临时用户 | 遍历该临时用户的所有 `assigned_to=临时用户ID` 且状态为 `sent`/`accepted` 的 brief，逐个迁移到注册用户。 |
 
 ## Migration Plan

@@ -42,6 +42,7 @@ class FeedbackListItem(BaseModel):
     from_user_name: str
     to_user_id: UUID
     to_user_name: str
+    content: str
     created_at: str
 
 

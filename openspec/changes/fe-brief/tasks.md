@@ -22,7 +22,7 @@
 ## 4. 详情页基础结构
 
 - [x] 4.1 创建 `web/app/briefs/[brief_id]/page.tsx`，Server Component 获取 Brief 详情与当前用户。
-- [x] 4.2 实现详情头部：标题、upstream_state badge、downstream_state badge、优先级 badge、创建者/执行者信息、以及 `draft_version` 可编辑 draft 徽标。
+- [x] 4.2 实现详情头部：标题、upstream_state badge、downstream_state badge、优先级 badge、创建者/执行者信息、以及 `unsent_version` 可编辑 draft 徽标。
 - [x] 4.3 实现内容/流转/Feedback 标签页切换。
 - [x] 4.4 实现流转历史时间线展示（含 `from_user_name` / `to_user_name`）。
 - [x] 4.5 实现 Feedback 列表展示（含 `is_to_down`、type、from/to 用户名字）。
@@ -44,7 +44,7 @@
 - [x] 7.2 实现 suspend/resume：`upstream_state=sent/in_process` 可 suspend，`upstream_state=suspended` 可 resume，调用对应 `upstream-actions` 端点。
 - [x] 7.3 实现 approve：`upstream_state=in_process` + `downstream_state=submitted` 时显示，调用 `POST /api/briefs/[id]/upstream-actions?action=approve`。
 - [x] 7.4 实现 reject_submit：`downstream_state=submitted` 时显示，调用 `POST /api/briefs/[id]/upstream-actions?action=reject_submit`。
-- [x] 7.5 实现 update：`upstream_state=in_process` 时显示；`draft_version` 为 null 时显示“推送更新”，不为 null 时显示“继续编辑更新”，调用 `POST /api/briefs/[id]/upstream-actions?action=update`。
+- [x] 7.5 实现 update：`upstream_state=in_process` 时显示；`unsent_version` 为 null 时显示“推送更新”，不为 null 时显示“继续编辑更新”，调用 `POST /api/briefs/[id]/upstream-actions?action=update`。
 
 ## 8. Downstream-actions 操作
 

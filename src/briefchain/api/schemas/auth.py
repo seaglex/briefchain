@@ -36,13 +36,9 @@ class RegisterRequest(BaseModel):
     phone: str | None = Field(default=None, pattern=r"^\+?1?\d{9,15}$", examples=["+8613800000000"])
     name: str = Field(..., min_length=1, max_length=255)
     password: str = Field(..., min_length=6, max_length=128)
-    temporary_user_id: UUID | None = Field(
-        default=None,
-        examples=["00000000-0000-0000-0000-000000000000"],
-    )
     invite_token: str | None = Field(
         default=None,
-        examples=["brief-id:nonce:deadline:signature"],
+        examples=["brief-id:temporary-user-id:nonce:deadline:signature"],
     )
 
     @field_validator("email", "phone", mode="before")
@@ -68,13 +64,9 @@ class LoginRequest(BaseModel):
     email: EmailStr | None = Field(default=None, examples=["user@example.com"])
     phone: str | None = Field(default=None, examples=["+8613800000000"])
     password: str = Field(..., min_length=1, max_length=128)
-    temporary_user_id: UUID | None = Field(
-        default=None,
-        examples=["00000000-0000-0000-0000-000000000000"],
-    )
     invite_token: str | None = Field(
         default=None,
-        examples=["brief-id:nonce:deadline:signature"],
+        examples=["brief-id:temporary-user-id:nonce:deadline:signature"],
     )
 
     @field_validator("email", "phone", mode="before")

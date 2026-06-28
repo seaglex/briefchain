@@ -21,7 +21,7 @@ The system SHALL return the full content of a specific brief version through the
 
 #### Scenario: Get current version by default
 - **WHEN** an authenticated user sends a GET request to `/api/v1/briefs/:brief_id` without a `version` parameter
-- **THEN** the system returns the current sent version content, `is_current` is `true`, and `draft_version` indicates the editable draft version number if one exists, otherwise `null`
+- **THEN** the system returns the current sent version content, `is_current` is `true`, and `unsent_version` indicates the editable draft version number if one exists, otherwise `null`
 
 #### Scenario: Requested version not found
 - **WHEN** an authenticated user sends a GET request to `/api/v1/briefs/:brief_id?version=999` for a version that does not exist

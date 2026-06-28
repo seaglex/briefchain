@@ -20,72 +20,51 @@ interface ApiError {
   message: string;
 }
 
-function InviteHeader({ invite }: { invite: { name: string; from_user: { id: string; name: string } } }) {
+function InviteHeader({
+  invite,
+  token,
+}: {
+  invite: { name: string; from_user: { id: string; name: string } };
+  token: string;
+}) {
+  const authQuery = `invite_token=${encodeURIComponent(token)}`;
+
   return (
-    <header style={{ borderBottom: "1px solid var(--c-border)" }}>
-      <div
-        style={{
-          maxWidth: 1200,
-          margin: "0 auto",
-          padding: "16px 24px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
-        <div className="flex items-center gap-12">
-          <div
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 8,
-              background: "var(--c-primary)",
-              color: "#fff",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontWeight: 700,
-            }}
-          >
-            B
-          </div>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 18 }}>BriefChain</div>
-            <div className="text-2" style={{ fontSize: 12 }}>
-              AI-reviewed briefs for smoother handoffs
-            </div>
-          </div>
+    <header className="topbar" style={{ position: "sticky", top: 0, zIndex: 10 }}>
+      <div className="flex items-center gap-12">
+        <div style={{ fontWeight: 700, fontSize: 20 }}>BriefChain</div>
+        <div className="text-2" style={{ fontSize: 12 }}>
+          AI-reviewed briefs for smoother handoffs
         </div>
       </div>
-      <div
-        style={{
-          maxWidth: 1200,
-          margin: "0 auto",
-          padding: "8px 24px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "flex-end",
-          gap: 16,
-          fontSize: 14,
-        }}
-      >
-        <span className="text-2">
-          {invite.name}，欢迎加入 BriefChain，轻松管理任务
+      <div className="flex items-center gap-12">
+        <span className="text-2" style={{ fontSize: 13 }}>
+          {invite.name}，欢迎加入 BriefChain
         </span>
-        <Link href="/login" className="text-link">
-          登录
-        </Link>
-        <Link href="/register" className="text-link">
-          注册
-        </Link>
+        <div className="flex items-center" style={{ marginLeft: 16, gap: 16 }}>
+          <Link href={`/login?${authQuery}`} className="text-link">
+            登录
+          </Link>
+          <Link href={`/register?${authQuery}`} className="text-link" style={{ marginLeft: 16 }}>
+            注册
+          </Link>
+        </div>
       </div>
     </header>
   );
 }
 
-function ErrorView({ error, token }: { error: ApiError; token: string }) {
+function ErrorView({
+  error,
+  token,
+}: {
+  error: ApiError;
+  token?: string;
+}) {
   const isExpired = error.code === "INVITE_EXPIRED";
   const isInvalidated = error.code === "INVITE_INVALIDATED";
+
+  const authQuery = token ? `?invite_token=${encodeURIComponent(token)}` : "";
 
   return (
     <div className="card" style={{ maxWidth: 560, margin: "80px auto", textAlign: "center" }}>
@@ -100,10 +79,10 @@ function ErrorView({ error, token }: { error: ApiError; token: string }) {
             : error.message || "无法加载邀请信息，请检查链接是否正确。"}
       </p>
       <div className="flex gap-8 justify-center">
-        <Link href="/login" className="btn btn-primary">
+        <Link href={`/login${authQuery}`} className="btn btn-primary">
           登录
         </Link>
-        <Link href="/register" className="btn">
+        <Link href={`/register${authQuery}`} className="btn">
           注册
         </Link>
       </div>
@@ -113,7 +92,7 @@ function ErrorView({ error, token }: { error: ApiError; token: string }) {
 
 export default function InvitePage() {
   const params = useParams();
-  const token = params.token as string;
+  const token = typeof params.token === "string" ? decodeURIComponent(params.token) : "";
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
@@ -189,7 +168,7 @@ export default function InvitePage() {
 
   return (
     <div className="min-h-screen" style={{ background: "var(--c-bg)" }}>
-      <InviteHeader invite={invite} />
+      <InviteHeader invite={invite} token={token} />
       <div className="app" style={{ height: "auto", minHeight: "calc(100vh - 80px)" }}>
         <div className="main">
           <div className="content">

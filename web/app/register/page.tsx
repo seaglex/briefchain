@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   apiFetch,
   isNonEmpty,
@@ -12,6 +12,9 @@ import {
 
 export default function RegisterPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const inviteToken = searchParams.get("invite_token");
+
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -52,14 +55,17 @@ export default function RegisterPage() {
     if (!validate()) return;
 
     setLoading(true);
+    const body: Record<string, string | undefined> = {
+      name: name.trim(),
+      email: email.trim() || undefined,
+      phone: phone.trim() || undefined,
+      password,
+    };
+    if (inviteToken) body.invite_token = inviteToken;
+
     const result = await apiFetch<{ user: unknown }>("/api/auth/register", {
       method: "POST",
-      body: JSON.stringify({
-        name: name.trim(),
-        email: email.trim() || undefined,
-        phone: phone.trim() || undefined,
-        password,
-      }),
+      body: JSON.stringify(body),
     });
     setLoading(false);
 
@@ -71,24 +77,14 @@ export default function RegisterPage() {
     router.replace("/");
   };
 
+  const loginHref = inviteToken
+    ? `/login?invite_token=${encodeURIComponent(inviteToken)}`
+    : "/login";
+
   return (
     <div className="login-page">
       <div className="login-card">
         <div className="login-logo">
-          <div className="login-logo-icon">
-            <svg
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M20.42 4.58a5.4 5.4 0 0 0-7.65 0l-.77.78-.77-.78a5.4 5.4 0 0 0-7.65 7.65l.77.78 7.65 7.65 7.65-7.65.77-.78a5.4 5.4 0 0 0 0-7.65z" />
-            </svg>
-          </div>
           <h1 style={{ marginTop: 8 }}>BriefChain</h1>
           <p className="text-2" style={{ fontSize: 12, marginTop: 4 }}>
             AI-reviewed briefs for smoother handoffs
@@ -167,7 +163,7 @@ export default function RegisterPage() {
 
           <p style={{ textAlign: "center", marginTop: 16, fontSize: 12, color: "var(--c-text-3)" }}>
             已有账号？{" "}
-            <Link href="/login" style={{ color: "var(--c-primary)" }}>
+            <Link href={loginHref} style={{ color: "var(--c-primary)" }}>
               登录
             </Link>
           </p>

@@ -38,7 +38,6 @@ from briefchain.models import (
 from briefchain.models.enums import (
     ArbiterReviewStatus,
     BriefDownstreamState,
-    BriefPriority,
     BriefUpstreamState,
     BriefVersionStatus,
     FeedbackType,
@@ -88,14 +87,6 @@ def _user_snapshot(user: User | None) -> UserSnapshot | None:
     return UserSnapshot(id=user.id, name=user.name)
 
 
-def _latest_editable_version(brief: Brief) -> BriefVersion | None:
-    """Return the latest version that can be edited in place (draft or reviewed)."""
-    for version in reversed(brief.versions):
-        if version.status in {BriefVersionStatus.DRAFT, BriefVersionStatus.REVIEWED}:
-            return version
-    return None
-
-
 def _current_version(brief: Brief) -> BriefVersion | None:
     """Return the version matching current_version, or the latest version if none sent."""
     if not brief.versions:
@@ -107,18 +98,18 @@ def _current_version(brief: Brief) -> BriefVersion | None:
     return brief.versions[-1]
 
 
-def _latest_draft_version(brief: Brief) -> BriefVersion | None:
-    """Return the most recent draft version, if any."""
+def _latest_unsent_version(brief: Brief) -> BriefVersion | None:
+    """Return the most recent unsent version (draft or reviewed), if any."""
     for version in reversed(brief.versions):
-        if version.status == BriefVersionStatus.DRAFT:
+        if version.status in {BriefVersionStatus.DRAFT, BriefVersionStatus.REVIEWED}:
             return version
     return None
 
 
-def _draft_version_number(brief: Brief) -> int | None:
-    """Return the editable draft version number, or None if no draft exists."""
-    draft = _latest_draft_version(brief)
-    return draft.version if draft is not None else None
+def _unsent_version_number(brief: Brief) -> int | None:
+    """Return the editable unsent version number, or None if no unsent version exists."""
+    unsent = _latest_unsent_version(brief)
+    return unsent.version if unsent is not None else None
 
 
 def _max_version(brief: Brief) -> int:
@@ -211,12 +202,10 @@ def _serialize_brief(
         version is not None and current_version is not None and version.version == current_version
     )
 
-    # Determine current version status without triggering a lazy load of brief.versions.
-    # When current_version is None the requested version is the effective current version;
-    # otherwise only use its status if it matches the brief's current_version.
-    current_version_status = None
-    if version is not None and (current_version is None or version.version == current_version):
-        current_version_status = version.status
+    # Return the status of the version being returned. When no explicit version is
+    # requested, `version` is already the current version, so this still reflects
+    # the current version's status.
+    current_version_status = version.status if version is not None else None
 
     base = BriefListItem(
         brief_id=brief.brief_id,
@@ -247,7 +236,7 @@ def _serialize_brief(
         current_version_status=current_version_status,
         version=version_number,
         is_current=is_current,
-        draft_version=_draft_version_number(brief),
+        unsent_version=_unsent_version_number(brief),
         estimated_man_days=float(estimated) if estimated is not None else None,
         expected_completion_at=_format_time(expected_completion) if expected_completion else None,
         created_at=_format_time(brief.created_at),
@@ -563,7 +552,7 @@ def patch_brief(
     user = _load_user(session, user_id)
 
     now = _now()
-    version = _latest_editable_version(brief)
+    version = _latest_unsent_version(brief)
     if version is None:
         # All existing versions are sent; fork a new draft from the current sent version.
         current = _current_version(brief)
@@ -641,7 +630,7 @@ def review_brief(
     brief = _load_brief_with_versions(session, brief_id)
     _require_creator(brief, user_id)
 
-    version = _latest_draft_version(brief)
+    version = _latest_unsent_version(brief)
     if version is None or version.status != BriefVersionStatus.DRAFT:
         raise APIError(
             code="INVALID_STATUS",
@@ -681,7 +670,7 @@ def send_brief(
     user_id: UUID,
     request: SendBriefRequest,
 ) -> BriefLifecycleResponse:
-    """Send a reviewed brief to a downstream user or external recipient."""
+    """Send a reviewed or previously-sent brief to a downstream user or external recipient."""
     from briefchain.api.services import invites as invite_service
 
     now = _now()
@@ -689,10 +678,13 @@ def send_brief(
     _require_creator(brief, user_id)
 
     version = _current_version(brief)
-    if version is None or version.status != BriefVersionStatus.REVIEWED:
+    if version is None or version.status not in (
+        BriefVersionStatus.REVIEWED,
+        BriefVersionStatus.SENT,
+    ):
         raise APIError(
             code="INVALID_STATUS",
-            message="Only reviewed brief versions can be sent",
+            message="Only reviewed or sent brief versions can be sent",
             status_code=409,
         )
 
@@ -716,7 +708,8 @@ def send_brief(
     assignee = _load_user(session, assigned_to)
 
     # Mark version as sent and sync denormalized brief fields.
-    version.status = BriefVersionStatus.SENT
+    if version.status == BriefVersionStatus.REVIEWED:
+        version.status = BriefVersionStatus.SENT
     version.modified_at = now
     brief.current_version = version.version
     _sync_brief_from_version(session, brief, version, state_changed_by=user_id)
@@ -949,7 +942,7 @@ def upstream_action(
     user_id: UUID,
     action: str,
     content: str,
-) -> BriefDetail:
+) -> BriefLifecycleResponse:
     """Perform an upstream state-changing action on a brief (excluding update)."""
     brief = _load_brief_with_versions(session, brief_id)
     _require_creator(brief, user_id)
@@ -1007,7 +1000,7 @@ def upstream_action(
     _set_state_changed(session, brief, user_id)
     session.commit()
     brief = _load_brief_with_versions(session, brief_id)
-    return _serialize_brief(brief, detail=True)
+    return BriefLifecycleResponse(brief=_serialize_brief(brief, detail=True))
 
 
 def update_brief_version(
@@ -1015,59 +1008,68 @@ def update_brief_version(
     brief_id: UUID,
     user_id: UUID,
     request: BriefUpdateActionRequest,
-) -> BriefDetail:
-    """Push a new version of an in-process brief."""
+) -> BriefLifecycleResponse:
+    """Send an existing reviewed unsent version to downstream.
+
+    The caller must first patch a new draft version and submit it for review;
+    this action only promotes the reviewed version to sent and reopens the
+    brief for downstream.
+    """
     brief = _load_brief_with_versions(session, brief_id)
     _require_creator(brief, user_id)
     user = _load_user(session, user_id)
-    if brief.upstream_state != BriefUpstreamState.IN_PROCESS:
+    if brief.upstream_state not in (BriefUpstreamState.IN_PROCESS, BriefUpstreamState.SUSPENDED):
         raise APIError(
             code="INVALID_STATUS",
-            message="Only in-process briefs can be updated",
+            message="Only in-process / suspended briefs can be updated",
+            status_code=409,
+        )
+
+    unsent = next(
+        (v for v in brief.versions if v.version == request.version),
+        None,
+    )
+    if unsent is None:
+        raise APIError(
+            code="VERSION_NOT_FOUND",
+            message="The requested version does not belong to this brief",
+            status_code=404,
+        )
+    if unsent.status != BriefVersionStatus.REVIEWED:
+        raise APIError(
+            code="INVALID_STATUS",
+            message="Only a reviewed version can be updated",
             status_code=409,
         )
 
     now = _now()
-    current = _current_version(brief)
-    current_title = current.title if current else ""
-    current_content = current.content if current else ""
-    current_attachments = current.attachments if current else []
-    current_priority = current.priority if current else BriefPriority.P2
-    current_estimated = current.estimated_man_days if current else None
-    current_expected = current.expected_completion_at if current else None
 
-    new_version = BriefVersion(
-        brief_id=brief.brief_id,
-        version=_max_version(brief) + 1,
-        status=BriefVersionStatus.DRAFT,
-        title=request.title if request.title is not None else current_title,
-        content=current_content,
-        attachments=request.attachments if request.attachments is not None else current_attachments,
-        priority=request.priority if request.priority is not None else current_priority,
-        estimated_man_days=(
-            Decimal(str(request.estimated_man_days))
-            if request.estimated_man_days is not None
-            else current_estimated
-        ),
-        expected_completion_at=(
-            _parse_iso(request.expected_completion_at)
-            if request.expected_completion_at is not None
-            else current_expected
-        ),
-        is_upstream_changed=True,
-        revision_reason=request.revision_reason or "update",
-        modified_by=user_id,
-        modified_by_name=user.name,
-        modified_at=now,
-        change_summary=request.change_summary or "Updated brief",
-    )
-    session.add(new_version)
+    # Apply optional field overrides from the request onto the reviewed version.
+    if request.title is not None:
+        unsent.title = request.title
+    if request.content is not None:
+        unsent.content = request.content
+    if request.attachments is not None:
+        unsent.attachments = request.attachments
+    if request.priority is not None:
+        unsent.priority = request.priority
+    if request.estimated_man_days is not None:
+        unsent.estimated_man_days = Decimal(str(request.estimated_man_days))
+    if request.expected_completion_at is not None:
+        unsent.expected_completion_at = _parse_iso(request.expected_completion_at)
+    if request.revision_reason:
+        unsent.revision_reason = request.revision_reason
+    if request.change_summary:
+        unsent.change_summary = request.change_summary
+    unsent.modified_by = user_id
+    unsent.modified_by_name = user.name
+    unsent.modified_at = now
 
-    # Auto-review and auto-send the new version (MVP).
+    # Auto-review and auto-send the existing version (MVP).
     review = BriefArbiterReview(
         id=uuid4(),
         brief_id=brief.brief_id,
-        brief_version=new_version.version,
+        brief_version=unsent.version,
         arbiter_id="force_skip",
         status=ArbiterReviewStatus.FORCE_SKIPPED,
         score=None,
@@ -1078,10 +1080,10 @@ def update_brief_version(
     session.add(review)
     session.flush()
 
-    new_version.status = BriefVersionStatus.SENT
-    new_version.arbiter_review_id = review.id
-    brief.current_version = new_version.version
-    _sync_brief_from_version(brief, new_version, state_changed_by=user_id)
+    unsent.status = BriefVersionStatus.SENT
+    unsent.arbiter_review_id = review.id
+    brief.current_version = unsent.version
+    _sync_brief_from_version(session, brief, unsent, state_changed_by=user_id)
     brief.downstream_state = BriefDownstreamState.OPENED
 
     _create_feedback(
@@ -1097,23 +1099,18 @@ def update_brief_version(
     _set_state_changed(session, brief, user_id)
     session.commit()
     brief = _load_brief_with_versions(session, brief_id)
-    return _serialize_brief(brief, detail=True)
+    return BriefLifecycleResponse(brief=_serialize_brief(brief, detail=True))
 
 
 _UPSTREAM_ACTIONS: dict[str, dict[str, Any]] = {
     "cancel": {
-        "required_upstream_states": {
-            BriefUpstreamState.EDITING,
-            BriefUpstreamState.SENT,
-            BriefUpstreamState.IN_PROCESS,
-            BriefUpstreamState.SUSPENDED,
-        },
+        "forbidden_upstream_states": {BriefUpstreamState.DONE},
         "feedback_type": FeedbackType.CANCEL,
         "target_upstream_state": BriefUpstreamState.CANCELLED,
         "to_user": "assigned_or_creator",
     },
     "suspend": {
-        "required_upstream_states": {BriefUpstreamState.SENT, BriefUpstreamState.IN_PROCESS},
+        "required_upstream_states": {BriefUpstreamState.IN_PROCESS},
         "feedback_type": FeedbackType.SUSPEND,
         "target_upstream_state": BriefUpstreamState.SUSPENDED,
         "to_user": "assigned_or_creator",
@@ -1125,7 +1122,6 @@ _UPSTREAM_ACTIONS: dict[str, dict[str, Any]] = {
         "to_user": "assigned_or_creator",
     },
     "approve": {
-        "required_upstream_states": {BriefUpstreamState.IN_PROCESS, BriefUpstreamState.SUSPENDED},
         "required_downstream_states": {BriefDownstreamState.SUBMITTED},
         "feedback_type": FeedbackType.APPROVE,
         "target_upstream_state": BriefUpstreamState.DONE,
@@ -1134,6 +1130,7 @@ _UPSTREAM_ACTIONS: dict[str, dict[str, Any]] = {
     "reject_submit": {
         "required_downstream_states": {BriefDownstreamState.SUBMITTED},
         "feedback_type": FeedbackType.REJECT_SUBMIT,
+        "target_upstream_state": BriefUpstreamState.IN_PROCESS,
         "target_downstream_state": BriefDownstreamState.OPENED,
         "to_user": "assigned",
     },
@@ -1177,14 +1174,20 @@ def downstream_action(
     content: str | None,
     attachments: list[dict] | None,
 ) -> BriefLifecycleResponse:
-    """Perform a downstream action on an in-process brief."""
+    """Perform a downstream state-changing action on a brief."""
     brief = _load_brief_with_versions(session, brief_id)
     _require_assigned(brief, user_id)
 
-    if brief.upstream_state != BriefUpstreamState.IN_PROCESS:
+    allowed_upstream_states = {
+        BriefUpstreamState.IN_PROCESS,
+        BriefUpstreamState.SUSPENDED,
+        BriefUpstreamState.CANCELLED,
+        BriefUpstreamState.DONE,
+    }
+    if brief.upstream_state not in allowed_upstream_states:
         raise APIError(
             code="INVALID_STATUS",
-            message="Only in-process briefs can receive downstream actions",
+            message="Downstream actions are only available after the brief is accepted",
             status_code=409,
         )
 

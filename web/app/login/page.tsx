@@ -2,11 +2,14 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch, isNonEmpty } from "@/lib/auth";
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const inviteToken = searchParams.get("invite_token");
+
   const [emailOrPhone, setEmailOrPhone] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -26,9 +29,15 @@ export default function LoginPage() {
     if (!validate()) return;
 
     setLoading(true);
+    const body: Record<string, string> = {
+      email_or_phone: emailOrPhone,
+      password,
+    };
+    if (inviteToken) body.invite_token = inviteToken;
+
     const result = await apiFetch<{ user: unknown }>("/api/auth/login", {
       method: "POST",
-      body: JSON.stringify({ email_or_phone: emailOrPhone, password }),
+      body: JSON.stringify(body),
     });
     setLoading(false);
 
@@ -40,24 +49,14 @@ export default function LoginPage() {
     router.replace("/");
   };
 
+  const registerHref = inviteToken
+    ? `/register?invite_token=${encodeURIComponent(inviteToken)}`
+    : "/register";
+
   return (
     <div className="login-page">
       <div className="login-card">
         <div className="login-logo">
-          <div className="login-logo-icon">
-            <svg
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M20.42 4.58a5.4 5.4 0 0 0-7.65 0l-.77.78-.77-.78a5.4 5.4 0 0 0-7.65 7.65l.77.78 7.65 7.65 7.65-7.65.77-.78a5.4 5.4 0 0 0 0-7.65z" />
-            </svg>
-          </div>
           <h1 style={{ marginTop: 8 }}>BriefChain</h1>
           <p className="text-2" style={{ fontSize: 12, marginTop: 4 }}>
             AI-reviewed briefs for smoother handoffs
@@ -108,7 +107,7 @@ export default function LoginPage() {
 
           <p style={{ textAlign: "center", marginTop: 16, fontSize: 12, color: "var(--c-text-3)" }}>
             还没有账号？{" "}
-            <Link href="/register" style={{ color: "var(--c-primary)" }}>
+            <Link href={registerHref} style={{ color: "var(--c-primary)" }}>
               注册
             </Link>
           </p>

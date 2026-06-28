@@ -39,7 +39,7 @@ export interface BriefDetail {
   current_version_status: string | null;
   version: number;
   is_current: boolean;
-  draft_version: number | null;
+  unsent_version: number | null;
   attachments: unknown[];
   created_at: string;
   updated_at: string;

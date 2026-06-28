@@ -5,10 +5,12 @@ export async function POST(request: NextRequest) {
   const body = (await request.json()) as {
     email_or_phone?: string;
     password?: string;
+    invite_token?: string;
   };
 
   const emailOrPhone = body.email_or_phone?.trim() || "";
   const password = body.password || "";
+  const inviteToken = body.invite_token?.trim();
 
   if (!emailOrPhone || !password) {
     return NextResponse.json(
@@ -25,9 +27,10 @@ export async function POST(request: NextRequest) {
   // The backend LoginRequest expects separate `email` and `phone` fields.
   // We detect the input type here to stay compatible with the existing API.
   const isEmail = emailOrPhone.includes("@");
-  const backendBody = isEmail
+  const backendBody: Record<string, string | undefined> = isEmail
     ? { email: emailOrPhone, password }
     : { phone: emailOrPhone, password };
+  if (inviteToken) backendBody.invite_token = inviteToken;
 
   const backendResponse = await fetch(`${API_BASE_URL}/api/v1/auth/login`, {
     method: "POST",

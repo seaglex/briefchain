@@ -13,7 +13,7 @@ The system SHALL allow the brief creator to patch a brief when `upstream_state` 
 
 #### Scenario: Patch on sent version creates new draft
 - **WHEN** the creator views a brief whose current version status is `sent` and clicks edit
-- **THEN** the system calls `POST /api/v1/briefs/[brief_id]/editing?action=patch` and, on success, the detail page reloads with a new `draft_version`
+- **THEN** the system calls `POST /api/v1/briefs/[brief_id]/editing?action=patch` and, on success, the detail page reloads with a new `unsent_version`
 
 ### Requirement: Upstream can submit the current draft version for review
 The system SHALL allow the brief creator to submit the current draft version for review via `action=submit-review`.
@@ -88,17 +88,16 @@ The system SHALL allow the brief creator to reject a submitted brief and force d
 - **WHEN** the creator clicks "打回" and enters a rejection reason
 - **THEN** the system calls `POST /api/v1/briefs/[brief_id]/upstream-actions?action=reject_submit` with the reason, refreshes the page, and shows `downstream_state` as "opened"
 
-### Requirement: Upstream can push an updated brief version
-The system SHALL allow the brief creator to push a new version of an in-process brief. When `draft_version` is `null` the creator initiates a new update; when `draft_version` is not `null` the creator continues editing the existing draft.
+### Requirement: Upstream can send a reviewed unsent version
+The system SHALL allow the brief creator to send an existing reviewed unsent version to downstream, forcing downstream to reopen it. The creator must first create a new draft via patch and submit it for review; the update action only promotes the reviewed version to sent.
 
-#### Scenario: Start a new update
-- **WHEN** the creator views an in-process brief where `draft_version` is `null` and clicks "推送更新"
-- **THEN** the system calls `POST /api/v1/briefs/[brief_id]/upstream-actions?action=update` with new version fields and a change note, refreshes the page, and shows a new `current_version` and `downstream_state` as "opened"
+#### Scenario: Send reviewed unsent version
+- **WHEN** the creator views an in-process or suspended brief where `unsent_version` points to a reviewed version and clicks "更新"
+- **THEN** the system calls `POST /api/v1/briefs/[brief_id]/upstream-actions?action=update` with the reviewed `version` number, optional version field overrides, and a required change note, refreshes the page, and shows that version as the new `current_version` and `downstream_state` as "opened"
 
-#### Scenario: Continue an existing update draft
-- **WHEN** the creator views an in-process brief where `draft_version` is not `null`
-- **THEN** the page shows a "Continue update" button that loads the draft version content
-- **AND** clicking it calls `POST /api/v1/briefs/[brief_id]/upstream-actions?action=update` with the latest draft fields and a change note
+#### Scenario: Update rejected when no reviewed unsent version exists
+- **WHEN** the creator views an in-process or suspended brief where `unsent_version` is `null` or points to a draft version and clicks "更新"
+- **THEN** the system shows an error and does not call the update endpoint
 
 ### Requirement: Downstream can submit progress feedback
 The system SHALL allow the brief assignee to submit a progress update without changing the brief state.

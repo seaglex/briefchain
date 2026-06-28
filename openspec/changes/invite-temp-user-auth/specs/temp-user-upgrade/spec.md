@@ -1,18 +1,18 @@
 ## ADDED Requirements
 
 ### Requirement: Register with invite token upgrades temporary user in place
-The system SHALL allow a `POST /auth/register` request to include optional `temporary_user_id` and `invite_token`; when valid, the temporary user currently associated with the invite is upgraded to `registered` and retains the same UUID.
+The system SHALL allow a `POST /auth/register` request to include optional `invite_token`; when valid, the temporary user encoded in the token is upgraded to `registered` and retains the same UUID.
 
 #### Scenario: Successful upgrade from temporary user
-- **WHEN** a registration request provides `email`, `password`, `name`, and a valid `invite_token` whose associated temporary user matches the provided `temporary_user_id`
-- **THEN** the system updates the existing temporary user row to `user_type="registered"`, sets `password_hash`, updates `email`/`name`, sets `users.from_temporary_user_id` to the temporary user's own UUID, marks the invite's `final_user_id` to the registered user's UUID, invalidates all invites linked to the temporary user, and returns a JWT for the same UUID
+- **WHEN** a registration request provides `email`, `password`, `name`, and a valid `invite_token`
+- **THEN** the system extracts `temporary_user_id` from the token, updates the existing temporary user row to `user_type="registered"`, sets `password_hash`, updates `email`/`name`, sets `users.from_temporary_user_id` to the temporary user's own UUID, marks the invite's `final_user_id` to the registered user's UUID, invalidates all invites linked to the temporary user, and returns a JWT for the same UUID
 
 #### Scenario: Upgrade migrates all active briefs to registered user
 - **WHEN** a temporary user successfully registers with `invite_token`
 - **THEN** the system updates `assigned_to` to the registered user's UUID for all briefs assigned to the temporary user whose `upstream_state` is not `done` and not `cancelled`
 
-#### Scenario: Invalid invite token or mismatched temporary user is rejected
-- **WHEN** a registration request provides an `invite_token` that is invalid, expired, invalidated, or a `temporary_user_id` that does not match the invite's temporary user
+#### Scenario: Invalid invite token is rejected
+- **WHEN** a registration request provides an `invite_token` that is invalid, expired, invalidated, or whose encoded temporary user does not match the invite record
 - **THEN** the system returns `400 Bad Request` with code `INVALID_INVITE_TOKEN`
 
 #### Scenario: Email already registered during upgrade
@@ -20,11 +20,11 @@ The system SHALL allow a `POST /auth/register` request to include optional `temp
 - **THEN** the system returns `409 Conflict` with code `EMAIL_ALREADY_REGISTERED`
 
 ### Requirement: Login with invite token links brief ownership
-The system SHALL allow a `POST /auth/login` request to include optional `temporary_user_id` and `invite_token`; when valid, the briefs currently assigned to the temporary user are reassigned to the logged-in registered user.
+The system SHALL allow a `POST /auth/login` request to include optional `invite_token`; when valid, the briefs currently assigned to the temporary user encoded in the token are reassigned to the logged-in registered user.
 
 #### Scenario: Login links in_process brief from temporary user
-- **WHEN** a login request provides valid credentials for a registered user and a valid `invite_token` whose associated temporary user matches the provided `temporary_user_id`
-- **THEN** the system updates all active briefs' `assigned_to` to the registered user's UUID, sets `users.from_temporary_user_id` on the registered user to the temporary user's UUID, marks the invite's `final_user_id` to the registered user's UUID, invalidates all invites linked to the temporary user, and returns the registered user's JWT
+- **WHEN** a login request provides valid credentials for a registered user and a valid `invite_token`
+- **THEN** the system extracts `temporary_user_id` from the token, updates all active briefs' `assigned_to` to the registered user's UUID, sets `users.from_temporary_user_id` on the registered user to the temporary user's UUID, marks the invite's `final_user_id` to the registered user's UUID, invalidates all invites linked to the temporary user, and returns the registered user's JWT
 
 #### Scenario: Login migrates all active briefs to registered user
 - **WHEN** a registered user logs in with an `invite_token` and the temporary user has multiple active briefs
@@ -34,8 +34,8 @@ The system SHALL allow a `POST /auth/login` request to include optional `tempora
 - **WHEN** a temporary user's brief ownership is migrated to a registered user via login
 - **THEN** existing transfer history rows keep `to_user` pointing to the temporary user UUID
 
-#### Scenario: Invalid invite token or mismatched temporary user on login is rejected
-- **WHEN** a login request provides an `invite_token` that is invalid, expired, invalidated, or a `temporary_user_id` that does not match the invite's temporary user
+#### Scenario: Invalid invite token on login is rejected
+- **WHEN** a login request provides an `invite_token` that is invalid, expired, invalidated, or whose encoded temporary user does not match the invite record
 - **THEN** the system returns `400 Bad Request` with code `INVALID_INVITE_TOKEN`
 
 ### Requirement: Upgrade or login records final user and invalidates invite

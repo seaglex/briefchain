@@ -33,18 +33,17 @@ null           // upstream_state 不是 in_process 时，无 downstream 角色
 
 ### 1.2 有效状态组合矩阵
 
-| upstream_state | downstream_state=null | downstream_state=opened | downstream_state=delegated | downstream_state=blocked | downstream_state=submitted |
-|:--------------:|:-----:|:-----:|:-----:|:-----:|:-----:|
-| editing | ✅ 编写 | ❌ | ❌ | ❌ | ❌ |
-| sent | ✅ 等候 | ❌ | ❌ | ❌ | ❌ |
-| in_process | ❌ | ✅ 执行 | ✅ 委派 | ✅ 阻塞 | ✅ 待审 |
-| suspended | ❌ | ✅ 暂停 | ✅ 暂停 | ✅ 暂停 | ✅ 暂停 |
-| cancelled | ❌ | ✅ 终结 | ✅ 终结 | ✅ 终结 | ✅ 终结 |
-| done | ✅ 完成 | ❌ | ❌ | ❌ | ❌ |
+上下游状态尽量解耦，尽量少限制，前端可以只提供合理的操作，后端不限制。
+- editing / edit，还没有建立联系，后端不能有任何状态
+- in_process / suspended / cancelled / done，虽然后三者不需要再投入，但是更新进度还是可以的。
 
-> *suspended + blocked：理论合法（上游冻结时下游原本就阻塞），但 UX 上暂停优先级高于阻塞，downstream 在 suspended 期间不能操作。数据库允许此组合，前端展示为"暂停"。
-
-> cancelled 保留 downstream_state：仅用于历史审计，前端展示为"已取消"即可。
+动作限制类似
+- version 在 draft 状态，才能 view 动作
+- version 在 reviewed 状态，才能 send / update 动作
+- upstream 在 send 状态，downstream 只能有 accept or reject 动作，upstream 可以再 sent（先修改）
+- upstream 在 in_process / suspended 状态，自己才能 update
+- upstream 在 in_process / suspended / cancelled / done 状态，downstream 都可以修改状态
+- downstream 在 submitted 状态，upstream 才能 approve or reject_submit
 
 ### 1.3 状态流转图
 
@@ -70,21 +69,25 @@ editing ──(send)──→ sent ──(send)──→ sent    // 替换邀约
 ### 1.3.1 version 与 state 解耦
 
 **核心原则：version 生命周期和 brief 状态机是两条独立的线，`send`（邀约阶段）和 `update`（合约期间）是两座桥梁。**
+- sent 后，breif 和 version 关联起来，如果被 rejected，依然关联，这时 version 状态是 sent
+- version.sent 代表 version 不能随便修改了
+- brief.version 代表 brief 和 version 的关联
+- brief.upstream_state & brief.downstream_state 代表 brief状态
 
-| 操作 | 作用域 | 说明                                   |
-|------|--------|--------------------------------------|
-| patch | 只改 version.status 和内容 | 不碰 upstream_state / downstream_state |
-| submit-review | 只改 version.status | draft → reviewed，不碰 brief 状态         |
-| send | 桥梁：version → sent + brief 状态变更 | 唯一同时操作两边的动作，version必须是reviewed状态     |
-| accept / reject / cancel / suspend / resume / approve / reject_submit | 只改 brief 状态 | 不碰 version                           |
-| process / submit / open / delegate / block | 只改 brief 状态 | 不碰 version                           |
+| 操作 | 作用域 | 说明                                          |
+|------|--------|---------------------------------------------|
+| patch | 只改 version.status 和内容 | 不碰 upstream_state / downstream_state        |
+| submit-review | 只改 version.status | draft → reviewed，不碰 brief 状态                |
+| send | 桥梁：version → sent + brief 状态变更 | 唯一同时操作两边的动作，version必须是reviewed状态（或者是sent状态） |
+| accept / reject / cancel / suspend / resume / approve / reject_submit | 只改 brief 状态 | 不碰 version                                  |
+| process / submit / open / delegate / block | 只改 brief 状态 | 不碰 version                                  |
 
 **send 的两种场景（邀约阶段，记录在 transfer_history）：**
 
-| brief 状态 | send 的效果 | transfer_history |
-|-----------|------------|-----------------|
-| editing | 首次发送：current_version null→N，brief editing→sent | ✅ 新记录 |
-| sent | 替换邀约：current_version 更新，brief 状态不变 | ✅ 新记录 |
+| brief 状态 | send 的效果                                         | transfer_history |
+|-----------|--------------------------------------------------|-----------------|
+| editing | 首次发送：current_version null→N，brief editing→sent   | ✅ 新记录 |
+| sent | 替换邀约：current_version 更新，brief 状态不变，或者是被拒绝后重新sent | ✅ 新记录 |
 
 **update 的场景（合约期间，记录在 feedbacks）：**
 
@@ -92,7 +95,7 @@ editing ──(send)──→ sent ──(send)──→ sent    // 替换邀约
 |-----------|---------------|----------|
 | in_process / suspended | 更新合约：current_version 更新，downstream→opened | type=update |
 
-> **version 必须处于 reviewed 状态**（与 send 相同）。update 前需先 submit-review 通过审查，MVP: auto-pass。
+> **version 必须处于 reviewed 状态**（与 send 相同）。update 前需先 submit-review 通过审查。
 
 > sent 状态下也允许 send：upstream 发出邀约后、downstream 响应前，upstream 可以修改并重新发送，代价更小（还没建立合约）。draft 可以先准备着，随时 send 替换。
 
@@ -156,10 +159,10 @@ editing ──(send)──→ sent ──(send)──→ sent    // 替换邀约
 
 Brief 是合约，操作是审慎的。前端根据当前用户角色 + brief 状态 + version 状态，显示可用动作。
 
-**get_brief 返回 `draft_version` 字段**（版本号，非 id）：
-- current_version = null → 返回最新 draft 版本内容，draft_version = 该版本号
-- current_version = N，存在 N+1 draft → 返回 vN 内容（sent），draft_version = N+1
-- current_version = N，无更高版本 → 返回 vN 内容，draft_version = null
+**get_brief 返回 `unsent_version` 字段**（版本号，非 id）：
+- current_version = null → 返回最新 draft 版本内容，unsent_version = 该版本号
+- current_version = N，存在 N+1 draft → 返回 vN 内容（sent），unsent_version = N+1
+- current_version = N，无更高版本 → 返回 vN 内容，unsent_version = null
 
 **前端行为按角色区分：**
 

@@ -49,7 +49,7 @@ export async function serverFetch<T>(
 
 /** Fetch the current authenticated user profile. Only usable server-side. */
 export async function getCurrentUser(): Promise<
-  | { ok: true; user: { id: string; name: string; email: string | null; phone: string | null } }
+  | { ok: true; user: { id: string; name: string; email: string | null; phone: string | null; user_type: string } }
   | { ok: false; message: string }
 > {
   const result = await serverFetch<{
@@ -57,6 +57,7 @@ export async function getCurrentUser(): Promise<
     name: string;
     email: string | null;
     phone: string | null;
+    user_type: string;
   }>("/api/v1/auth/me");
 
   if (!result.ok) {

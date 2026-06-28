@@ -46,7 +46,7 @@ def test_get_brief_latest_version(
     assert data["is_current"] is False
 
 
-def test_patch_brief_modifies_draft_version(
+def test_patch_brief_modifies_unsent_version(
     client: TestClient,
     auth_headers_creator: dict[str, str],
     draft_brief: Brief,
@@ -109,6 +109,50 @@ def test_send_brief(
     assert data["brief"]["upstream_state"] == "sent"
     assert data["brief"]["current_version"] == 1
     assert data["transfer"]["to_user_id"] == str(downstream.id)
+
+
+def test_resend_brief_after_rejection(
+    client: TestClient,
+    auth_headers_creator: dict[str, str],
+    auth_headers_downstream: dict[str, str],
+    auth_headers_other_user: dict[str, str],
+    draft_brief: Brief,
+    downstream,
+    other_user,
+) -> None:
+    """Creator can resend a previously-sent version after downstream rejection."""
+    client.post(
+        f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=submit-review",
+        headers=auth_headers_creator,
+    )
+    client.post(
+        f"/api/v1/briefs/{draft_brief.brief_id}/transfer?action=send",
+        headers=auth_headers_creator,
+        json={"assigned_to": str(downstream.id)},
+    )
+
+    reject_response = client.post(
+        f"/api/v1/briefs/{draft_brief.brief_id}/transfer?action=reject",
+        headers=auth_headers_downstream,
+        json={"reason": "Not interested"},
+    )
+    assert reject_response.status_code == 200
+    rejected = reject_response.json()
+    assert rejected["brief"]["upstream_state"] == "editing"
+    assert rejected["brief"]["assigned_to_id"] is None
+
+    resend_response = client.post(
+        f"/api/v1/briefs/{draft_brief.brief_id}/transfer?action=send",
+        headers=auth_headers_creator,
+        json={"assigned_to": str(other_user.id)},
+    )
+
+    assert resend_response.status_code == 200
+    data = resend_response.json()
+    assert data["brief"]["upstream_state"] == "sent"
+    assert data["brief"]["current_version"] == 1
+    assert data["brief"]["assigned_to_id"] == str(other_user.id)
+    assert data["transfer"]["to_user_id"] == str(other_user.id)
 
 
 def test_accept_brief(

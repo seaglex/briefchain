@@ -3,8 +3,9 @@
 import { useRouter, useSearchParams } from "next/navigation";
 
 const ROLES = [
-  { key: "assigned", label: "分配给我的" },
+  { key: "assigned", label: "分配给我" },
   { key: "created", label: "我创建的" },
+  { key: "pending", label: "待处理" },
 ];
 
 const UPSTREAM_STATES = [

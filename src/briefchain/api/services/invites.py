@@ -5,6 +5,7 @@ from __future__ import annotations
 import binascii
 import hmac
 import secrets
+import urllib.parse
 from datetime import UTC, datetime
 from hashlib import sha256
 from uuid import UUID, uuid4
@@ -29,6 +30,21 @@ def _format_time(value: datetime) -> str:
     return value.isoformat()
 
 
+def _decode_token(token: str) -> str:
+    """URL-decode a token, handling accidental double-encoding.
+
+    The invite token format only contains `:`, URL-safe base64 characters,
+    UUID characters, and hex digits. `%` should never appear in a valid token,
+    so URL-decoding is safe and makes the API tolerant of accidental encoding.
+    """
+    prev = token
+    while True:
+        decoded = urllib.parse.unquote(prev)
+        if decoded == prev:
+            return decoded
+        prev = decoded
+
+
 def _generate_nonce() -> str:
     """Generate a URL-safe random nonce."""
     return secrets.token_urlsafe(16)
@@ -44,38 +60,45 @@ def _sign_payload(payload: str) -> str:
     return signature
 
 
-def generate_invite_token(brief_id: UUID, nonce: str, accept_deadline: datetime) -> str:
+def generate_invite_token(
+    brief_id: UUID,
+    temporary_user_id: UUID,
+    nonce: str,
+    accept_deadline: datetime,
+) -> str:
     """Generate an HMAC-signed invite token.
 
-    Token format: brief_id_hex:nonce:accept_deadline_epoch:signature
+    Token format: brief_id_hex:temporary_user_id_hex:nonce:accept_deadline_epoch:signature
     """
     deadline_epoch = _epoch_seconds(accept_deadline)
     brief_id_hex = str(brief_id)
-    payload = f"{brief_id_hex}:{nonce}:{deadline_epoch}"
+    temporary_user_id_hex = str(temporary_user_id)
+    payload = f"{brief_id_hex}:{temporary_user_id_hex}:{nonce}:{deadline_epoch}"
     signature = _sign_payload(payload)
     return f"{payload}:{signature}"
 
 
-def parse_invite_token(token: str) -> tuple[UUID, str, int, str]:
+def parse_invite_token(token: str) -> tuple[UUID, UUID, str, int, str]:
     """Parse an invite token into its components.
 
     Returns:
-        Tuple of (brief_id, nonce, accept_deadline_epoch, signature).
+        Tuple of (brief_id, temporary_user_id, nonce, accept_deadline_epoch, signature).
 
     Raises:
         APIError: If the token format is invalid.
     """
     parts = token.split(":")
-    if len(parts) != 4:
+    if len(parts) != 5:
         raise APIError(
             code="INVITE_INVALID_TOKEN",
             message="Invalid invite token format",
             status_code=401,
         )
 
-    brief_id_hex, nonce, deadline_str, signature = parts
+    brief_id_hex, temporary_user_id_hex, nonce, deadline_str, signature = parts
     try:
         brief_id = UUID(brief_id_hex)
+        temporary_user_id = UUID(temporary_user_id_hex)
         accept_deadline_epoch = int(deadline_str)
     except (ValueError, AttributeError) as exc:
         raise APIError(
@@ -84,20 +107,20 @@ def parse_invite_token(token: str) -> tuple[UUID, str, int, str]:
             status_code=401,
         ) from exc
 
-    return brief_id, nonce, accept_deadline_epoch, signature
+    return brief_id, temporary_user_id, nonce, accept_deadline_epoch, signature
 
 
-def verify_invite_token_signature(token: str) -> tuple[UUID, str, int]:
+def verify_invite_token_signature(token: str) -> tuple[UUID, UUID, str, int]:
     """Verify the HMAC signature of an invite token.
 
     Returns:
-        Tuple of (brief_id, nonce, accept_deadline_epoch).
+        Tuple of (brief_id, temporary_user_id, nonce, accept_deadline_epoch).
 
     Raises:
         APIError: If the signature does not match.
     """
-    brief_id, nonce, accept_deadline_epoch, signature = parse_invite_token(token)
-    payload = f"{brief_id}:{nonce}:{accept_deadline_epoch}"
+    brief_id, temporary_user_id, nonce, accept_deadline_epoch, signature = parse_invite_token(token)
+    payload = f"{brief_id}:{temporary_user_id}:{nonce}:{accept_deadline_epoch}"
     expected_signature = _sign_payload(payload)
 
     try:
@@ -114,7 +137,7 @@ def verify_invite_token_signature(token: str) -> tuple[UUID, str, int]:
             status_code=401,
         ) from exc
 
-    return brief_id, nonce, accept_deadline_epoch
+    return brief_id, temporary_user_id, nonce, accept_deadline_epoch
 
 
 def _now() -> datetime:
@@ -125,15 +148,19 @@ def get_invite_by_token(session: Session, token: str) -> BriefInvite:
     """Validate an invite token and return the corresponding invite record.
 
     Validation order:
-    1. HMAC signature check (no DB lookup).
-    2. accept_deadline has not expired.
-    3. Database lookup by nonce.
-    4. Invite has not been invalidated.
+    1. URL-decode the token to tolerate accidental encoding.
+    2. HMAC signature check (no DB lookup).
+    3. accept_deadline has not expired.
+    4. Database lookup by nonce.
+    5. Invite has not been invalidated.
+    6. Token temporary_user_id matches the invite record.
 
     Raises:
         APIError: If any validation step fails.
     """
-    _, nonce, accept_deadline_epoch = verify_invite_token_signature(token)
+    decoded_token = _decode_token(token)
+    parsed = verify_invite_token_signature(decoded_token)
+    _, temporary_user_id, nonce, accept_deadline_epoch = parsed
 
     if accept_deadline_epoch <= _epoch_seconds(_now()):
         raise APIError(
@@ -158,6 +185,13 @@ def get_invite_by_token(session: Session, token: str) -> BriefInvite:
             code="INVITE_INVALIDATED",
             message="Invite has been invalidated. Please log in to continue.",
             status_code=410,
+        )
+
+    if invite.temporary_user_id != temporary_user_id:
+        raise APIError(
+            code="INVITE_INVALID_TOKEN",
+            message="Invite temporary user mismatch",
+            status_code=401,
         )
 
     return invite
@@ -191,7 +225,7 @@ def create_invite(
         The created BriefInvite record.
     """
     nonce = _generate_nonce()
-    token = generate_invite_token(brief_id, nonce, accept_deadline)
+    token = generate_invite_token(brief_id, temporary_user_id, nonce, accept_deadline)
 
     invite = BriefInvite(
         id=uuid4(),

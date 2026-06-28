@@ -382,7 +382,6 @@ def test_register_with_invite_token_upgrades_temporary_user(
     """Registering with invite_token upgrades the temporary user in place."""
     brief_id = invite_response["brief"]["brief_id"]
     brief = db_session.get(Brief, UUID(brief_id))
-    temporary_user_id = str(brief.assigned_to)
     invite_url = invite_response["invite"]["invite_url"]
     token = invite_url.split("/invites/")[1]
 
@@ -392,7 +391,6 @@ def test_register_with_invite_token_upgrades_temporary_user(
             "email": "external@example.com",
             "password": "password123",
             "name": "Registered External",
-            "temporary_user_id": temporary_user_id,
             "invite_token": token,
         },
     )
@@ -425,8 +423,6 @@ def test_register_migrates_all_active_briefs(
         },
     )
     first_data = first_response.json()
-    first_brief = db_session.get(Brief, reviewed_brief_for_invite.brief_id)
-    temporary_user_id = str(first_brief.assigned_to)
     invite_url = first_data["invite"]["invite_url"]
     token = invite_url.split("/invites/")[1]
 
@@ -492,7 +488,6 @@ def test_register_migrates_all_active_briefs(
             "email": "multi@example.com",
             "password": "password123",
             "name": "Registered Multi",
-            "temporary_user_id": temporary_user_id,
             "invite_token": token,
         },
     )
@@ -514,7 +509,6 @@ def test_login_with_invite_token_links_brief(
     """Logging in with invite_token migrates brief ownership to the registered user."""
     brief_id = invite_response["brief"]["brief_id"]
     brief = db_session.get(Brief, UUID(brief_id))
-    temporary_user_id = str(brief.assigned_to)
     invite_url = invite_response["invite"]["invite_url"]
     token = invite_url.split("/invites/")[1]
 
@@ -534,7 +528,6 @@ def test_login_with_invite_token_links_brief(
         json={
             "email": "registered@example.com",
             "password": "password123",
-            "temporary_user_id": temporary_user_id,
             "invite_token": token,
         },
     )
@@ -571,9 +564,6 @@ def test_invite_invalidated_after_register(
     db_session: Session,
 ) -> None:
     """Invite token is invalidated after temporary user registers."""
-    brief_id = invite_response["brief"]["brief_id"]
-    brief = db_session.get(Brief, UUID(brief_id))
-    temporary_user_id = str(brief.assigned_to)
     invite_url = invite_response["invite"]["invite_url"]
     token = invite_url.split("/invites/")[1]
 
@@ -583,7 +573,6 @@ def test_invite_invalidated_after_register(
             "email": "external@example.com",
             "password": "password123",
             "name": "Registered External",
-            "temporary_user_id": temporary_user_id,
             "invite_token": token,
         },
     )

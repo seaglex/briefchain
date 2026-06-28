@@ -15,7 +15,7 @@
 
 - [x] 3.1 Implement `create_brief` service with root/child handling, initial draft version creation, and `current_version` null
 - [x] 3.2 Implement `list_briefs` service with role / upstream_state / downstream_state / root_id filters and cursor pagination
-- [x] 3.3 Implement `get_brief_detail` service returning requested version content, `is_current`, and `draft_version`
+- [x] 3.3 Implement `get_brief_detail` service returning requested version content, `is_current`, and `unsent_version`
 - [x] 3.4 Implement `list_brief_versions` service returning version status and modifier name snapshots
 - [x] 3.5 Implement `patch_brief` service modifying draft/reviewed version in place or creating a new draft version when the current version status is `sent`
 - [x] 3.6 Implement `review_brief` service transitioning current draft version status to "reviewed"
@@ -40,7 +40,7 @@
 
 ## 6. Brief Transfer Routes (`/api/v1/briefs/:brief_id/transfer`)
 
-- [x] 6.1 Implement `POST /briefs/:brief_id/transfer?action=send` (reviewed → sent, create transfer, support temporary user)
+- [x] 6.1 Implement `POST /briefs/:brief_id/transfer?action=send` (reviewed or sent → sent, create transfer, support temporary user, allow re-sending after rejection)
 - [x] 6.2 Implement `POST /briefs/:brief_id/transfer?action=accept` (sent → in_process, opened)
 - [x] 6.3 Implement `POST /briefs/:brief_id/transfer?action=reject` (sent → editing)
 

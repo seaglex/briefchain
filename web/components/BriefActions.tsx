@@ -3,9 +3,9 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch, isNonEmpty } from "@/lib/auth";
+import { isoToLocalDateTime, localDateTimeToISO } from "@/lib/date";
 import { sendBrief } from "@/lib/invites";
 import UserSelector from "@/components/UserSelector";
-import type { BriefDetail } from "@/components/BriefDetail";
 
 interface BriefActionsProps {
   briefId: string;
@@ -17,10 +17,11 @@ interface BriefActionsProps {
   estimatedManDays: number | null;
   expectedCompletionAt: string | null;
   currentVersionStatus: string | null;
-  draftVersion: number | null;
-  draftVersionDetail: BriefDetail | null;
+  assignedToId: string | null;
+  updateVersion?: number;
   isCreator: boolean;
   isAssignee: boolean;
+  isViewingDraft?: boolean;
 }
 
 export default function BriefActions({
@@ -33,10 +34,11 @@ export default function BriefActions({
   estimatedManDays,
   expectedCompletionAt,
   currentVersionStatus,
-  draftVersion,
-  draftVersionDetail,
+  assignedToId,
+  updateVersion,
   isCreator,
   isAssignee,
+  isViewingDraft,
 }: BriefActionsProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -49,7 +51,7 @@ export default function BriefActions({
   const [editPriority, setEditPriority] = useState(priority);
   const [editEstimated, setEditEstimated] = useState(estimatedManDays?.toString() || "");
   const [editExpectedCompletion, setEditExpectedCompletion] = useState(
-    expectedCompletionAt ? expectedCompletionAt.slice(0, 16) : ""
+    isoToLocalDateTime(expectedCompletionAt)
   );
   const [editReason, setEditReason] = useState("");
 
@@ -110,18 +112,11 @@ export default function BriefActions({
 
   const startEdit = (mode: "patch" | "update") => {
     setEditMode(mode);
-    const source = mode === "patch" && draftVersionDetail ? draftVersionDetail : {
-      title,
-      content,
-      priority,
-      estimated_man_days: estimatedManDays,
-      expected_completion_at: expectedCompletionAt,
-    };
-    setEditTitle(source.title);
-    setEditContent(source.content);
-    setEditPriority(source.priority);
-    setEditEstimated(source.estimated_man_days?.toString() || "");
-    setEditExpectedCompletion(source.expected_completion_at ? source.expected_completion_at.slice(0, 16) : "");
+    setEditTitle(title);
+    setEditContent(content);
+    setEditPriority(priority);
+    setEditEstimated(estimatedManDays?.toString() || "");
+    setEditExpectedCompletion(isoToLocalDateTime(expectedCompletionAt));
     setEditReason("");
     setModal("edit");
   };
@@ -132,16 +127,24 @@ export default function BriefActions({
       return;
     }
 
-    const payload = {
+    const payload: Record<string, unknown> = {
       title: editTitle.trim(),
       content: editContent.trim(),
       priority: editPriority,
       estimated_man_days: editEstimated ? parseFloat(editEstimated) : null,
       expected_completion_at: editExpectedCompletion
-        ? new Date(editExpectedCompletion).toISOString()
+        ? localDateTimeToISO(editExpectedCompletion)
         : null,
       revision_reason: editReason.trim() || (editMode === "patch" ? "更新内容" : "版本更新"),
     };
+
+    if (editMode === "update") {
+      if (updateVersion === undefined) {
+        setError("缺少更新版本号");
+        return;
+      }
+      payload.version = updateVersion;
+    }
 
     const path =
       editMode === "patch"
@@ -588,152 +591,198 @@ export default function BriefActions({
     );
   };
 
-  return (
-    <>
-      <div className="flex gap-8 flex-wrap">
-        {isCreator && !["done", "cancelled"].includes(upstreamState) && (
-          <button className="btn btn-sm" onClick={() => startEdit("patch")}>
-            {draftVersion ? `编辑 Draft v${draftVersion}` : "编辑"}
-          </button>
-        )}
+  const renderDraftActions = () => {
+    if (!isViewingDraft) return null;
+    if (!isCreator) return null;
 
-        {isCreator && currentVersionStatus === "draft" && (
+    if (currentVersionStatus === "draft") {
+      return (
+        <div className="detail-header-actions-group">
+          <button
+            className="btn btn-sm"
+            onClick={() => startEdit("patch")}
+            disabled={loading}
+          >
+            修改
+          </button>
           <button
             className="btn btn-sm btn-primary"
             onClick={() => setModal("review")}
             disabled={loading}
           >
-            提交审查
+            审核
           </button>
-        )}
+        </div>
+      );
+    }
 
-        {isCreator && currentVersionStatus === "reviewed" && (
-          <button
-            className="btn btn-sm btn-primary"
-            onClick={() => setModal("send")}
-            disabled={loading}
-          >
-            发送给 downstream
-          </button>
-        )}
-
-        {isAssignee && upstreamState === "sent" && (
-          <>
-            <button
-              className="btn btn-sm btn-primary"
-              onClick={() => handleAction(`/api/briefs/${briefId}/transfer?action=accept`)}
-              disabled={loading}
-            >
-              接受
-            </button>
-            <button
-              className="btn btn-sm btn-danger"
-              onClick={() => setModal("reject")}
-              disabled={loading}
-            >
-              拒绝
-            </button>
-          </>
-        )}
-
-        {isCreator && upstreamState === "in_process" && downstreamState === "submitted" && (
-          <>
-            <button
-              className="btn btn-sm btn-primary"
-              onClick={() => setModal("approve")}
-              disabled={loading}
-            >
-              确认完成
-            </button>
-            <button
-              className="btn btn-sm btn-danger"
-              onClick={() => setModal("reject_submit")}
-              disabled={loading}
-            >
-              打回
-            </button>
-          </>
-        )}
-
-        {isCreator && upstreamState === "in_process" && (
-          <button
-            className="btn btn-sm"
-            onClick={() => startEdit("update")}
-            disabled={loading}
-          >
-            {draftVersion ? "继续更新" : "推送更新"}
-          </button>
-        )}
-
-        {isAssignee && upstreamState === "in_process" && (
-          <>
+    if (currentVersionStatus === "reviewed") {
+      if (assignedToId === null) {
+        return (
+          <div className="detail-header-actions-group">
             <button
               className="btn btn-sm"
-              onClick={() => setModal("process")}
+              onClick={() => startEdit("patch")}
               disabled={loading}
             >
-              进度更新
+              修改
             </button>
-            {downstreamState !== "submitted" && (
-              <button
-                className="btn btn-sm btn-primary"
-                onClick={() => setModal("submit")}
-                disabled={loading}
-              >
-                提交完成
-              </button>
-            )}
-            {(downstreamState === "submitted" || downstreamState === "delegated" || downstreamState === "blocked") && (
-              <button
-                className="btn btn-sm"
-                onClick={() => setModal("open")}
-                disabled={loading}
-              >
-                重新打开
-              </button>
-            )}
+            <button
+              className="btn btn-sm btn-primary"
+              onClick={() => setModal("send")}
+              disabled={loading}
+            >
+              分配用户
+            </button>
+          </div>
+        );
+      }
+
+      return (
+        <div className="detail-header-actions-group">
+          <button
+            className="btn btn-sm"
+            onClick={() => startEdit("patch")}
+            disabled={loading}
+          >
+            修改
+          </button>
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={() => {
+              if (updateVersion === undefined) {
+                setError("缺少更新版本号");
+                return;
+              }
+              handleAction(`/api/briefs/${briefId}/upstream-actions?action=update`, {
+                version: updateVersion,
+                content: "发送更新",
+              });
+            }}
+            disabled={loading}
+          >
+            更新
+          </button>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  const renderDownstreamActions = () => {
+    if (!isAssignee) return null;
+
+    if (upstreamState === "sent") {
+      return (
+        <div className="detail-header-actions-group">
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={() => handleAction(`/api/briefs/${briefId}/transfer?action=accept`)}
+            disabled={loading}
+          >
+            接受
+          </button>
+          <button
+            className="btn btn-sm btn-danger"
+            onClick={() => setModal("reject")}
+            disabled={loading}
+          >
+            拒绝
+          </button>
+        </div>
+      );
+    }
+
+    if (["in_process", "suspended"].includes(upstreamState)) {
+      return (
+        <div className="detail-header-actions-group">
+          {downstreamState !== "opened" && (
+            <button
+              className="btn btn-sm"
+              onClick={() => setModal("open")}
+              disabled={loading}
+            >
+              待处理
+            </button>
+          )}
+          {downstreamState !== "delegated" && (
             <button
               className="btn btn-sm"
               onClick={() => setModal("delegate")}
               disabled={loading}
             >
-              委托
+              已安排
             </button>
+          )}
+          {downstreamState !== "blocked" && (
             <button
               className="btn btn-sm btn-danger"
               onClick={() => setModal("block")}
               disabled={loading}
             >
-              阻塞
+              遇阻
             </button>
-          </>
-        )}
-
-        {isCreator && ["sent", "in_process"].includes(upstreamState) && (
-          <>
-            <button
-              className="btn btn-sm"
-              onClick={() => setModal("suspend")}
-              disabled={loading}
-            >
-              暂停
-            </button>
-          </>
-        )}
-
-        {isCreator && upstreamState === "suspended" && (
-          <>
+          )}
+          {downstreamState !== "submitted" && (
             <button
               className="btn btn-sm btn-primary"
-              onClick={() => setModal("resume")}
+              onClick={() => setModal("submit")}
               disabled={loading}
             >
-              恢复
+              提交结果
             </button>
-          </>
-        )}
+          )}
+        </div>
+      );
+    }
 
-        {isCreator && ["sent", "in_process", "suspended"].includes(upstreamState) && (
+    // cancelled / done / editing -> no downstream actions
+    return null;
+  };
+
+  const renderUpstreamActions = () => {
+    if (!isCreator) return null;
+
+    if (["cancelled", "done"].includes(upstreamState)) {
+      return null;
+    }
+
+    // Submitted downstream takes priority over general upstream actions.
+    if (
+      downstreamState === "submitted" &&
+      ["in_process", "suspended"].includes(upstreamState)
+    ) {
+      return (
+        <div className="detail-header-actions-group">
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={() => setModal("approve")}
+            disabled={loading}
+          >
+            确认完成
+          </button>
+          <button
+            className="btn btn-sm btn-danger"
+            onClick={() => setModal("reject_submit")}
+            disabled={loading}
+          >
+            拒绝结果
+          </button>
+        </div>
+      );
+    }
+
+    if (upstreamState === "sent") {
+      return (
+        <div className="detail-header-actions-group">
+          <button
+            className="btn btn-sm"
+            onClick={() => startEdit("patch")}
+            disabled={loading}
+          >
+            修改
+          </button>
           <button
             className="btn btn-sm btn-danger"
             onClick={() => setModal("cancel")}
@@ -741,8 +790,140 @@ export default function BriefActions({
           >
             取消
           </button>
-        )}
-      </div>
+        </div>
+      );
+    }
+
+    if (upstreamState === "in_process") {
+      return (
+        <div className="detail-header-actions-group">
+          <button
+            className="btn btn-sm"
+            onClick={() => startEdit("patch")}
+            disabled={loading}
+          >
+            修改
+          </button>
+          <button
+            className="btn btn-sm"
+            onClick={() => setModal("suspend")}
+            disabled={loading}
+          >
+            暂停
+          </button>
+          <button
+            className="btn btn-sm btn-danger"
+            onClick={() => setModal("cancel")}
+            disabled={loading}
+          >
+            取消
+          </button>
+        </div>
+      );
+    }
+
+    if (upstreamState === "suspended") {
+      return (
+        <div className="detail-header-actions-group">
+          <button
+            className="btn btn-sm"
+            onClick={() => startEdit("patch")}
+            disabled={loading}
+          >
+            修改
+          </button>
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={() => setModal("resume")}
+            disabled={loading}
+          >
+            恢复
+          </button>
+          <button
+            className="btn btn-sm btn-danger"
+            onClick={() => setModal("cancel")}
+            disabled={loading}
+          >
+            取消
+          </button>
+        </div>
+      );
+    }
+
+    if (upstreamState === "editing" && currentVersionStatus === "draft") {
+      return (
+        <div className="detail-header-actions-group">
+          <button
+            className="btn btn-sm"
+            onClick={() => startEdit("patch")}
+            disabled={loading}
+          >
+            修改
+          </button>
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={() => setModal("review")}
+            disabled={loading}
+          >
+            审核
+          </button>
+        </div>
+      );
+    }
+
+    if (upstreamState === "editing" && currentVersionStatus === "reviewed") {
+      return (
+        <div className="detail-header-actions-group">
+          <button
+            className="btn btn-sm"
+            onClick={() => startEdit("patch")}
+            disabled={loading}
+          >
+            修改
+          </button>
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={() => setModal("send")}
+            disabled={loading}
+          >
+            分配用户
+          </button>
+        </div>
+      );
+    }
+
+    if (upstreamState === "editing" && currentVersionStatus === "sent") {
+      return (
+        <div className="detail-header-actions-group">
+          <button
+            className="btn btn-sm"
+            onClick={() => startEdit("patch")}
+            disabled={loading}
+          >
+            修改
+          </button>
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={() => setModal("send")}
+            disabled={loading}
+          >
+            分配用户
+          </button>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  return (
+    <>
+      {isViewingDraft ? renderDraftActions() : (
+        <>
+          {renderDownstreamActions()}
+          {renderUpstreamActions()}
+        </>
+      )}
       {renderModal()}
     </>
   );

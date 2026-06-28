@@ -52,20 +52,24 @@
 ### 4.1 生成
 
 ```
-token = brief_id_hex : nonce : accept_deadline_epoch : HMAC-SHA256(brief_id_hex : nonce : accept_deadline_epoch, jwt_secret_key)
+token = brief_id_hex : temp_user_id_hex : nonce : accept_deadline_epoch : HMAC-SHA256(brief_id_hex : temp_user_id_hex : nonce : accept_deadline_epoch, jwt_secret_key)
 ```
 
+- `temp_user_id_hex` = 临时用户 UUID 的 hex 表示（32 字符）
 - `nonce` = `secrets.token_urlsafe(16)`（16 字符 URL-safe 随机串）
 - `accept_deadline_epoch` = Unix timestamp（秒）
 - 签名密钥复用 `jwt_secret_key`
 
+> token 同时编码 `brief_id` 和 `temporary_user_id`，这样注册/登录流程只需传一个 token，端点操作也能直接从 token 解析 user_id，无需前端额外传递 `temporary_user_id`。
+
 ### 4.2 校验流程
 
-1. 解析 token → 提取 `brief_id`, `nonce`, `accept_deadline_epoch`, `signature`
+1. 解析 token → 提取 `brief_id`, `temp_user_id`, `nonce`, `accept_deadline_epoch`, `signature`
 2. HMAC 签名比对 → 拒绝伪造（**无需查 DB**）
 3. 检查 `accept_deadline_epoch` > 当前时间 → 拒绝过期
 4. DB 查 nonce → 找到 invite 记录
 5. 检查 `invalidated_at` 是否为 null → 拒绝已失效的邀请
+6. `temp_user_id` 可直接从 token 获取，无需从 invite 记录读取
 
 ### 4.3 为什么 nonce 做 DB 索引
 
@@ -98,11 +102,11 @@ User(
 
 ### 5.3 临时用户升级
 
-临时用户有两种方式升级为正式用户，均需携带 `temporary_user_id`（前端从邀请页面传入）。
+临时用户有两种方式升级为正式用户，均只需传 `invite_token`（token 中已编码 `temporary_user_id`）。
 
 #### 场景一：注册新账号（user_id 不变）
 
-临时用户在邀请页面点击「注册」，前端将 `token` 和 `temporary_user_id` 传给注册端点：
+临时用户在邀请页面点击「注册」，前端只需传 `invite_token`（token 中已编码 temporary_user_id）：
 
 ```json
 POST /auth/register
@@ -110,14 +114,12 @@ POST /auth/register
   "email": "lisi@example.com",
   "password": "secure_password",
   "name": "李四",
-  "temporary_user_id": "临时用户UUID",
-  "invite_token": "签名token"    // 用于校验 + 直接定位 brief_id，无需额外查询
+  "invite_token": "签名token"    // 用于校验 + 提取 brief_id 和 temporary_user_id
 }
 ```
 
 后端处理：
-1. 校验 `invite_token`（HMAC 签名 + 未过期 + 未失效），从中提取 `brief_id`
-2. 找到 `user_type=temporary` 的用户行（校验 temporary_user_id = invite.temporary_user_id）
+1. 校验 `invite_token`（HMAC 签名 + 未过期 + 未失效），从中提取 `brief_id` 和 `temporary_user_id`
 3. **原地升级**：`user_type` → `registered`，设置 `password_hash`，更新 `email`/`phone`/`name`
 4. `user_id` 不变 → `brief.assigned_to`、`transfer.to_user` 等所有引用自动有效，无需改动
 5. **批量失效所有 invite**：`UPDATE brief_invites SET invalidated_at = now WHERE temporary_user_id = T AND invalidated_at IS NULL`
@@ -125,20 +127,19 @@ POST /auth/register
 
 #### 场景二：登录已有账号
 
-临时用户已有注册账号，在邀请页面点击「登录」，前端将 `token` 和 `temporary_user_id` 传给登录端点：
+临时用户已有注册账号，在邀请页面点击「登录」，前端只需传 `invite_token`：
 
 ```json
 POST /auth/login
 {
   "email_or_phone": "lisi@example.com",
   "password": "secure_password",
-  "temporary_user_id": "临时用户UUID",
-  "invite_token": "签名token"    // 用于校验 + 直接定位 brief_id
+  "invite_token": "签名token"    // 用于校验 + 提取 brief_id 和 temporary_user_id
 }
 ```
 
 后端处理：
-1. 校验 `invite_token`（HMAC 签名 + 未过期 + 未失效），从中提取 `brief_id`
+1. 校验 `invite_token`（HMAC 签名 + 未过期 + 未失效），从中提取 `brief_id` 和 `temporary_user_id`
 2. 正常登录 → 找到注册用户 R
 3. 校验 temporary_user_id = invite.temporary_user_id
 4. **批量收回活跃 brief**：`UPDATE briefs SET assigned_to = R WHERE assigned_to = T AND status NOT IN ('done', 'cancelled')`
@@ -147,8 +148,8 @@ POST /auth/login
 7. **已经发生的记录不改**：`transfer.to_user = T`、`feedback.from_user = T` 保持不变（T 行仍在 DB 中，是有效引用）
 8. 返回 JWT（注册用户 R 的 token）
 
-> **为什么传 invite_token 而不仅传 temporary_user_id**：
-> - token 携带 brief_id（从签名中提取），后端直接定位 brief，无需通过 temporary_user_id 扫描 brief 表
+> **为什么只需传 invite_token，不再单独传 temporary_user_id**：
+> - token 中已编码 `brief_id` 和 `temporary_user_id`（HMAC 签名保护，不可伪造），后端直接解析即可
 > - 同时完成校验（签名有效、未过期、未失效）与数据提取，一次操作
 > - 防止攻击者伪造 temporary_user_id 绑架他人邀请记录
 
@@ -330,9 +331,9 @@ is_temporary_user=true，收到 recipient_email/phone（可能都为空）
 | models/user.py | user_type 新增 temporary；删除 EmailToken；新增 `from_temporary_user_id` 字段 |
 | models/enums.py | UserType 新增 TEMPORARY |
 | schemas/invites.py | 新增 InviteViewResponse + InviteTransferRequest + InviteDownstreamRequest |
-| schemas/auth.py | RegisterRequest / LoginRequest 新增 `temporary_user_id`、`invite_token` 可选参数 |
+| schemas/auth.py | RegisterRequest / LoginRequest 新增 `invite_token` 可选参数 |
 | services/invites.py | 新增 token 生成/校验 + invite 失效逻辑（回填 final_user_id） |
-| services/auth.py | 注册：原地升级，校验 invite_token 提取 brief_id；登录：用 brief_id 直接更新 assigned_to，填写 from_temporary_user_id |
+| services/auth.py | 注册：原地升级，校验 invite_token 提取 brief_id + temporary_user_id；登录：用 brief_id 直接更新 assigned_to，填写 from_temporary_user_id |
 | **routes/invites.py** | **新增** `POST /invites/{token}/transfer` + `POST /invites/{token}/downstream-actions`（临时用户操作端点） |
 | routes/auth.py | 注册/登录端点增加 invite_token 处理 |
 | services/briefs.py | send_brief 支持外部用户（方式二）；accept_brief/downstream_action 支持 temporary_user_id |
