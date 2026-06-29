@@ -6,7 +6,7 @@ The system SHALL return a list of all versions for a brief.
 #### Scenario: Successful version list
 - **WHEN** an authenticated user sends a GET request to `/api/v1/briefs/:brief_id/versions`
 - **THEN** the system returns all versions with `version`, `status`, `title`, `modified_by_id`, `modified_by_name`, `modified_at`, `change_summary`, `is_upstream_changed`, and `revision_reason`
-- **AND** the returned list includes versions whose `status` is `draft`, `reviewed`, or `sent`
+- **AND** the returned list includes versions whose `status` is `draft`, `reviewed`, or `final`
 
 #### Scenario: Version list for non-existent brief
 - **WHEN** an authenticated user sends a GET request to `/api/v1/briefs/:brief_id/versions` for a non-existent brief
@@ -21,7 +21,7 @@ The system SHALL return the full content of a specific brief version through the
 
 #### Scenario: Get current version by default
 - **WHEN** an authenticated user sends a GET request to `/api/v1/briefs/:brief_id` without a `version` parameter
-- **THEN** the system returns the current sent version content, `is_current` is `true`, and `unsent_version` indicates the editable draft version number if one exists, otherwise `null`
+- **THEN** the system returns the current final version content, `is_current` is `true`, and `unfinalized_version` indicates the editable draft version number if one exists, otherwise `null`
 
 #### Scenario: Requested version not found
 - **WHEN** an authenticated user sends a GET request to `/api/v1/briefs/:brief_id?version=999` for a version that does not exist

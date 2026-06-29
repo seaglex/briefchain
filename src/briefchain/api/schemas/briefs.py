@@ -52,7 +52,7 @@ class BriefDetail(BriefListItem):
     current_version_status: BriefVersionStatus | None
     version: int
     is_current: bool
-    unsent_version: int | None
+    unfinalized_version: int | None
     estimated_man_days: float | None
     expected_completion_at: str | None
     created_at: str

@@ -17,7 +17,7 @@
 
 BriefChain 是一个 Agent 增强的项目管理工具，用 Agent 约束需求和反馈质量，提升项目执行效率，同时约束项目内容和状态更新可靠性，提升组织迭代效率。
 
-与传统工具（Jira、钉钉）的核心区别：传统工具面向需求方，需求质量无约束，过程管理靠人工维护。BriefChain 平等对待需求方和执行方，以 brief 转移来自动获得项目的执行记录。
+与传统工具的核心区别：传统工具面向需求方，需求质量无约束，过程管理靠人工维护。BriefChain 平等对待需求方和执行方，以 brief 转移来自动获得项目的执行记录。
 
 ## 产品原则
 
@@ -112,54 +112,75 @@ Brief 状态由 `upstream_state` 和 `downstream_state` 共同表达，视角归
 | in_process | submitted | downstream 已提交，等 upstream review |
 | suspended | preserved | upstream 暂停（downstream_state 保留） |
 | cancelled | preserved | 已取消（downstream_state 保留用于审计） |
-| done | null | 验收通过，终态 |
+| done | preserved | 验收通过，终态 |
 
-> `draft` / `reviewed` 只在 `brief_versions.status`，不在 briefs 层级。brief 层级用 `editing` 统一表达。
+BriefVersion 状态 代表编辑状态
+
+|  status  |     含义     |
+|:--------:|:----------:|
+|  draft   |   草稿，不可发   |
+| reviewed | AI 审核过，可以发 |
+|  final   |  不可变更，可以发  |
+
 
 **状态分组（降低认知负担）：**
 
-| 分组 | 组合 | 直觉 |
-|------|------|------|
-| 编写中 | (editing, null) | "我还在想" |
-| 等候中 | (sent, null) | "等对方回应" |
+| 分组 | 组合                             | 直觉 |
+|------|--------------------------------|------|
+| 编写中 | (editing, null)                | "我还在想" |
+| 等候中 | (sent, null)                   | "等对方回应" |
 | 执行中 | (in_process, opened/delegated) | "在推进" |
-| 待审 | (in_process, submitted) | "交卷了等批" |
-| 阻塞 | (in_process, blocked) | "卡住了" |
-| 暂停 | (suspended, any) | "冻结" |
-| 结束 | (done, null) / (cancelled, any) | "落幕" |
+| 待审 | (in_process, submitted)        | "交卷了等批" |
+| 阻塞 | (in_process, blocked)          | "卡住了" |
+| 暂停 | (suspended, any)               | "冻结" |
+| 结束 | (done, any) / (cancelled, any) | "落幕" |
 
 详见 [01-brief-feedback-design.md](01-brief-feedback-design.md)。
 
 ## 动作盘点（12 个动作）
 
-**核心原则：version 与 state 解耦。** patch / submit-review 只操作 version，accept / cancel / suspend 等只操作 brief 状态。send 是邀约阶段桥梁（editing/sent），update 是合约期间桥梁（in_process）。
+**核心原则：version 与 state 解耦。**
+
+- version 状态，决定 patch 和 send 执行方式
+    - draft / reviewed 随便改，final 就只能升版本
+    - reviewed / final 才能 send（存在 rejected 后 re-send）
+- 编辑阶段
+    - 在不与 brief 关联 version 上修改
+    - send （可被拒绝） / update（直接发生） 动作使得 brief 与 version 关联，version 状态为final
+- 邀约阶段（send 之后）
+    - upstream_state 在 editing / sent 状态（区别在于 assigned_to 是否有值）
+    - downstream accept 变成 合约阶段
+- 合约阶段（accept 之后）
+    - brief upstream_state 不能是 editing 或 sent，其他几乎没有约束
+
+send 是邀约阶段桥梁，update 是合约阶段桥梁，同时与 brief state 和 brief version status 相关
 
 按 API 聚类分组：
 
-| 分组 | 动作 | 操作方 | 操作对象 | 变更                                                                   |
-|------|------|--------|---------|----------------------------------------------------------------------|
-| **编辑** | patch | upstream | version only | 修改版本内容（sent→新建 draft，非 sent→原地改）                                     |
-| | submit-review | upstream | version only | 版本 draft→reviewed                                                    |
-| **Transfer** | send | upstream | version + brief | 两种场景：首次发送 / 替换邀约（记录在 transfer_history）                               |
-| | accept | downstream | brief only | (sent, null) → (in_process, opened)                                  |
-| | reject | downstream | brief only | (sent, null) → (editing, null)                                       |
-| **Upstream-action** | cancel | upstream | brief only | → (cancelled, preserved)                                             |
-| | suspend | upstream | brief only | → (suspended, preserved)                                             |
-| | resume | upstream | brief only | → (in_process, preserved)                                            |
-| | approve | upstream | brief only | (in_process, submitted) → (done, preserved)                          |
-| | reject_submit | upstream | brief only | downstream_state → opened                                            |
-| | update | upstream | version + brief | downstream_state → opened + 版本+1（记录在 feedbacks），version需要是reviewed状态 |
-| **Downstream-action** | process | downstream | brief only | 不变，创建 progress feedback                                              |
-| | submit | downstream | brief only | downstream_state → submitted                                         |
-| | open | downstream | brief only | downstream_state → opened                                            |
-| | delegate | downstream | brief only | downstream_state → delegated                                         |
-| | block | downstream | brief only | downstream_state → blocked                                           |
+| 分组 | 动作 | 操作方 | 操作对象 | 变更                                    |
+|------|------|--------|---------|---------------------------------------|
+| **编辑** | patch | upstream | version only | 修改版本内容（final→新建 draft，非 final→原地改）    |
+| | submit-review | upstream | version only | 版本 draft→reviewed                     |
+| **Transfer** | send | upstream | version + brief | 两种场景：首次发送 / 替换邀约（记录在 transfer_history） |
+| | accept | downstream | brief only | (sent, null) → (in_process, opened)   |
+| | reject | downstream | brief only | (sent, null) → (editing, null)        |
+| **Upstream-action** | cancel | upstream | brief only | → (cancelled, preserved)              |
+| | suspend | upstream | brief only | → (suspended, preserved)              |
+| | resume | upstream | brief only | → (in_process, preserved)             |
+| | approve | upstream | brief only | (in_process, submitted) → (done, preserved) |
+| | reject_submit | upstream | brief only | (any, submitted) → (any, opened)      |
+| | update | upstream | version + brief | downstream_state → opened + 版本+1（记录在 feedbacks） |
+| **Downstream-action** | process | downstream | brief only | 不变，创建 progress feedback               |
+| | submit | downstream | brief only | downstream_state → submitted          |
+| | open | downstream | brief only | downstream_state → opened             |
+| | delegate | downstream | brief only | downstream_state → delegated          |
+| | block | downstream | brief only | downstream_state → blocked            |
 
 **核心规则：**
 - **version 与 state 解耦**：patch / submit-review 只操作 version，不碰 brief 状态；accept / cancel / suspend 等只操作 brief 状态，不碰 version。send 是邀约阶段桥梁，update 是合约期间桥梁
-- downstream 自由控制 downstream_state（在 in_process 范围内），不需要为每个动作起独立名字
+- downstream 自由控制 downstream_state，不需要为每个动作起独立名字
 - send 从 sent 发起 = 替换邀约（downstream 还没 accept，代价更小）
-- update 从 in_process / suspended 发起 = 更新合约（新版本 sent + 强制 downstream_state → opened，记录在 feedbacks 而非 transfer_history）
+- update 从 in_process / suspended 发起 = 更新合约（新版本 final + 强制 downstream_state → opened，记录在 feedbacks 而非 transfer_history）
 - suspend 只改 upstream_state，downstream_state 保留不动；resume 原样恢复
 - cancel 保留 downstream_state 用于历史审计
 

@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Send brief to downstream
-The system SHALL allow the creator to send a reviewed or previously-sent brief to a downstream user. `send` is the invitation-phase bridge: it transitions the current version to `sent`, synchronizes `briefs.current_version` / `title` / `priority` / `expected_completion_at`, and transitions `upstream_state` to "sent" (or keeps it "sent" when replacing an existing invitation).
+The system SHALL allow the creator to send a reviewed or previously-final brief to a downstream user. `send` is the invitation-phase bridge: it transitions the current version to `final`, synchronizes `briefs.current_version` / `title` / `priority` / `expected_completion_at`, and transitions `upstream_state` to "sent" (or keeps it "sent" when replacing an existing invitation).
 
 #### Scenario: Successful send to registered user
 - **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/transfer?action=send` with `is_temporary_user` false and `assigned_to` set to a registered user
@@ -17,7 +17,7 @@ The system SHALL allow the creator to send a reviewed or previously-sent brief t
 
 #### Scenario: Replacement send keeps upstream_state as sent
 - **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/transfer?action=send` while `upstream_state` is already "sent" or when `upstream_state` is "editing" after a previous rejection (with the current version still "sent")
-- **THEN** the system keeps `upstream_state` as "sent", transitions the current version to "sent" if it was "reviewed", updates `assigned_to` and `assigned_to_name` to the new recipient, creates a new `BriefTransferHistory` record, and returns the brief and transfer
+- **THEN** the system keeps `upstream_state` as "sent", transitions the current version to "final" if it was "reviewed", updates `assigned_to` and `assigned_to_name` to the new recipient, creates a new `BriefTransferHistory` record, and returns the brief and transfer
 
 #### Scenario: Send rejected for non-creator
 - **WHEN** a non-creator sends a POST request to `/api/v1/briefs/:brief_id/transfer?action=send`

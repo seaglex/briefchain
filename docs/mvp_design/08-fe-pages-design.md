@@ -26,7 +26,7 @@
 - header 信息和操作（如果铺得开就一行，铺不开就三行）
   - 信息区
     - title（最多显示10个字符）
-      - 如果有 created_by = myself and unsent_version is not null，增加链接指向这个版本
+      - 如果有 created_by = myself and unfinalized_version is not null，增加链接指向这个版本
     - priority
     - 如果未关联，显示: "upstream_state (version.status)"
     - 如果已关联，显示："upstream_state / downstream_state"
@@ -42,7 +42,7 @@
     - in_process / suspended -> 显示选项 opened(待处理) / delegated(已安排) / blocked(遇阻) / submit(提交结果)，去掉当前 downstream_state 状态的选项
     - canceled / done -> 不显示选项
   - upstream 操作区（如果created_by = myself）
-    - editing（非draft，version状态应该是sent） -> 显示选项 edit(修改) assign(分配用户)
+    - editing（非draft，version状态应该是final） -> 显示选项 edit(修改) assign(分配用户)
     - sent -> 显示选项 edit(修改) / cancel(取消) 
     - in_process / 其他 -> 显示选项 edit(修改) / suspend(暂停) / cancel(取消)
     - suspected / 其他 -> 显示选项 edit(修改) / resume(恢复) / cancel(取消)

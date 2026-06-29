@@ -9,14 +9,14 @@ The system SHALL provide a `BriefVersion` SQLAlchemy model that stores the brief
 
 #### Scenario: Update brief content creates a new draft version
 - **WHEN** an upstream user updates the title or content of a draft brief
-- **THEN** a new `BriefVersion` row is inserted with the next version number and `status` set to "draft"; `Brief.current_version` is not changed until the new version is sent
+- **THEN** a new `BriefVersion` row is inserted with the next version number and `status` set to "draft"; `Brief.current_version` is not changed until the new version is finalized
 
 #### Scenario: Send a version makes it the current version
 - **WHEN** an upstream user sends a reviewed brief version downstream
-- **THEN** the version's `status` becomes "sent", `Brief.current_version` is updated to that version number, and `Brief.title`, `Brief.priority`, and `Brief.expected_completion_at` are synchronized to match that version
+- **THEN** the version's `status` becomes "final", `Brief.current_version` is updated to that version number, and `Brief.title`, `Brief.priority`, and `Brief.expected_completion_at` are synchronized to match that version
 
 ### Requirement: Brief version status uses a defined enumeration
-The system SHALL restrict `BriefVersion.status` to the values "draft", "reviewed", and "sent".
+The system SHALL restrict `BriefVersion.status` to the values "draft", "reviewed", and "final".
 
 #### Scenario: Invalid version status is rejected
 - **WHEN** code attempts to assign an unsupported value to `BriefVersion.status`

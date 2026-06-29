@@ -37,7 +37,7 @@
 - **做法**：在 `web/lib/auth.ts` 新增 `getSessionToken()`（读取 httpOnly Cookie），列表页通过该 token 调用 `GET /api/v1/briefs?role=...&upstream_state=...&downstream_state=...`。
 
 ### 4. 详情页为 Server Component，交互操作为 Client Component
-- **理由**：详情内容（title、content、attachments、versions、transfers、feedbacks、unsent_version）适合服务端渲染；而 patch、submit-review、send、accept、reject、approve、submit、block 等需要表单状态与事件处理，必须使用 Client Component。
+- **理由**：详情内容（title、content、attachments、versions、transfers、feedbacks、unfinalized_version）适合服务端渲染；而 patch、submit-review、send、accept、reject、approve、submit、block 等需要表单状态与事件处理，必须使用 Client Component。
 - **做法**：`page.tsx` 为 Server Component，负责获取 brief 详情与当前用户；将操作按钮抽取到 `BriefActions` Client Component，通过 props 传入 brief 的 `upstream_state`、`downstream_state`、当前用户角色等信息。
 
 ### 5. 写操作通过内部 API Route 代理

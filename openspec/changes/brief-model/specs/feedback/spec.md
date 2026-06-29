@@ -21,7 +21,7 @@ The system SHALL provide a `Feedback` SQLAlchemy model that stores the feedback 
 
 #### Scenario: Create update feedback
 - **WHEN** an upstream user pushes a new brief version downstream
-- **THEN** a `Feedback` row is inserted with `is_to_down` set to true, `type` set to "update", the new version becomes the current sent version, and the brief's `downstream_state` transitions to "opened"
+- **THEN** a `Feedback` row is inserted with `is_to_down` set to true, `type` set to "update", the new version becomes the current final version, and the brief's `downstream_state` transitions to "opened"
 
 ### Requirement: Feedback type uses a defined enumeration
 The system SHALL restrict `Feedback.type` based on `is_to_down`: when `is_to_down` is true the values are "cancel", "suspend", "resume", "approve", "reject_submit", and "update"; when `is_to_down` is false the values are "submit", "block", "delegate", "open", and "progress".

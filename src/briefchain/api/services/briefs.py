@@ -88,7 +88,7 @@ def _user_snapshot(user: User | None) -> UserSnapshot | None:
 
 
 def _current_version(brief: Brief) -> BriefVersion | None:
-    """Return the version matching current_version, or the latest version if none sent."""
+    """Return the version matching current_version, or the latest version if none final."""
     if not brief.versions:
         return None
     if brief.current_version is not None:
@@ -98,18 +98,18 @@ def _current_version(brief: Brief) -> BriefVersion | None:
     return brief.versions[-1]
 
 
-def _latest_unsent_version(brief: Brief) -> BriefVersion | None:
-    """Return the most recent unsent version (draft or reviewed), if any."""
+def _latest_unfinalized_version(brief: Brief) -> BriefVersion | None:
+    """Return the most recent unfinalized version (draft or reviewed), if any."""
     for version in reversed(brief.versions):
         if version.status in {BriefVersionStatus.DRAFT, BriefVersionStatus.REVIEWED}:
             return version
     return None
 
 
-def _unsent_version_number(brief: Brief) -> int | None:
-    """Return the editable unsent version number, or None if no unsent version exists."""
-    unsent = _latest_unsent_version(brief)
-    return unsent.version if unsent is not None else None
+def _unfinalized_version_number(brief: Brief) -> int | None:
+    """Return the editable unfinalized version number, or None if no unfinalized version exists."""
+    unfinalized = _latest_unfinalized_version(brief)
+    return unfinalized.version if unfinalized is not None else None
 
 
 def _max_version(brief: Brief) -> int:
@@ -122,7 +122,7 @@ def _sync_brief_from_version(
     version: BriefVersion,
     state_changed_by: UUID | None = None,
 ) -> None:
-    """Synchronize denormalized brief fields from a sent version."""
+    """Synchronize denormalized brief fields from a final version."""
     brief.title = version.title
     brief.priority = version.priority
     brief.expected_completion_at = version.expected_completion_at
@@ -191,7 +191,7 @@ def _serialize_brief(
         attachments = version.attachments
         estimated = version.estimated_man_days
         if brief.current_version is None:
-            # Before any version is sent, denormalized fields come from v1.
+            # Before any version is final, denormalized fields come from v1.
             title = version.title
             priority = version.priority
             expected_completion = version.expected_completion_at
@@ -236,7 +236,7 @@ def _serialize_brief(
         current_version_status=current_version_status,
         version=version_number,
         is_current=is_current,
-        unsent_version=_unsent_version_number(brief),
+        unfinalized_version=_unfinalized_version_number(brief),
         estimated_man_days=float(estimated) if estimated is not None else None,
         expected_completion_at=_format_time(expected_completion) if expected_completion else None,
         created_at=_format_time(brief.created_at),
@@ -542,7 +542,7 @@ def patch_brief(
     user_id: UUID,
     request: BriefPatchRequest,
 ) -> BriefDetail:
-    """Update an editable draft/reviewed version or create a new draft from a sent version.
+    """Update an editable draft/reviewed version or create a new draft from a final version.
 
     This operation only touches version state; it does not modify the brief's
     upstream/downstream state or synchronize denormalized brief fields.
@@ -552,9 +552,9 @@ def patch_brief(
     user = _load_user(session, user_id)
 
     now = _now()
-    version = _latest_unsent_version(brief)
+    version = _latest_unfinalized_version(brief)
     if version is None:
-        # All existing versions are sent; fork a new draft from the current sent version.
+        # All existing versions are final; fork a new draft from the current final version.
         current = _current_version(brief)
         if current is None:
             raise APIError(
@@ -630,7 +630,7 @@ def review_brief(
     brief = _load_brief_with_versions(session, brief_id)
     _require_creator(brief, user_id)
 
-    version = _latest_unsent_version(brief)
+    version = _latest_unfinalized_version(brief)
     if version is None or version.status != BriefVersionStatus.DRAFT:
         raise APIError(
             code="INVALID_STATUS",
@@ -670,7 +670,7 @@ def send_brief(
     user_id: UUID,
     request: SendBriefRequest,
 ) -> BriefLifecycleResponse:
-    """Send a reviewed or previously-sent brief to a downstream user or external recipient."""
+    """Send a reviewed or previously-final brief to a downstream user or external recipient."""
     from briefchain.api.services import invites as invite_service
 
     now = _now()
@@ -680,11 +680,11 @@ def send_brief(
     version = _current_version(brief)
     if version is None or version.status not in (
         BriefVersionStatus.REVIEWED,
-        BriefVersionStatus.SENT,
+        BriefVersionStatus.FINAL,
     ):
         raise APIError(
             code="INVALID_STATUS",
-            message="Only reviewed or sent brief versions can be sent",
+            message="Only reviewed or final brief versions can be sent",
             status_code=409,
         )
 
@@ -707,9 +707,9 @@ def send_brief(
 
     assignee = _load_user(session, assigned_to)
 
-    # Mark version as sent and sync denormalized brief fields.
+    # Mark version as final and sync denormalized brief fields.
     if version.status == BriefVersionStatus.REVIEWED:
-        version.status = BriefVersionStatus.SENT
+        version.status = BriefVersionStatus.FINAL
     version.modified_at = now
     brief.current_version = version.version
     _sync_brief_from_version(session, brief, version, state_changed_by=user_id)
@@ -1009,10 +1009,10 @@ def update_brief_version(
     user_id: UUID,
     request: BriefUpdateActionRequest,
 ) -> BriefLifecycleResponse:
-    """Send an existing reviewed unsent version to downstream.
+    """Send an existing reviewed unfinalized version to downstream.
 
     The caller must first patch a new draft version and submit it for review;
-    this action only promotes the reviewed version to sent and reopens the
+    this action only promotes the reviewed version to final and reopens the
     brief for downstream.
     """
     brief = _load_brief_with_versions(session, brief_id)
@@ -1025,17 +1025,17 @@ def update_brief_version(
             status_code=409,
         )
 
-    unsent = next(
+    unfinalized = next(
         (v for v in brief.versions if v.version == request.version),
         None,
     )
-    if unsent is None:
+    if unfinalized is None:
         raise APIError(
             code="VERSION_NOT_FOUND",
             message="The requested version does not belong to this brief",
             status_code=404,
         )
-    if unsent.status != BriefVersionStatus.REVIEWED:
+    if unfinalized.status != BriefVersionStatus.REVIEWED:
         raise APIError(
             code="INVALID_STATUS",
             message="Only a reviewed version can be updated",
@@ -1046,30 +1046,30 @@ def update_brief_version(
 
     # Apply optional field overrides from the request onto the reviewed version.
     if request.title is not None:
-        unsent.title = request.title
+        unfinalized.title = request.title
     if request.content is not None:
-        unsent.content = request.content
+        unfinalized.content = request.content
     if request.attachments is not None:
-        unsent.attachments = request.attachments
+        unfinalized.attachments = request.attachments
     if request.priority is not None:
-        unsent.priority = request.priority
+        unfinalized.priority = request.priority
     if request.estimated_man_days is not None:
-        unsent.estimated_man_days = Decimal(str(request.estimated_man_days))
+        unfinalized.estimated_man_days = Decimal(str(request.estimated_man_days))
     if request.expected_completion_at is not None:
-        unsent.expected_completion_at = _parse_iso(request.expected_completion_at)
+        unfinalized.expected_completion_at = _parse_iso(request.expected_completion_at)
     if request.revision_reason:
-        unsent.revision_reason = request.revision_reason
+        unfinalized.revision_reason = request.revision_reason
     if request.change_summary:
-        unsent.change_summary = request.change_summary
-    unsent.modified_by = user_id
-    unsent.modified_by_name = user.name
-    unsent.modified_at = now
+        unfinalized.change_summary = request.change_summary
+    unfinalized.modified_by = user_id
+    unfinalized.modified_by_name = user.name
+    unfinalized.modified_at = now
 
-    # Auto-review and auto-send the existing version (MVP).
+    # Auto-review and auto-finalize the existing version (MVP).
     review = BriefArbiterReview(
         id=uuid4(),
         brief_id=brief.brief_id,
-        brief_version=unsent.version,
+        brief_version=unfinalized.version,
         arbiter_id="force_skip",
         status=ArbiterReviewStatus.FORCE_SKIPPED,
         score=None,
@@ -1080,10 +1080,10 @@ def update_brief_version(
     session.add(review)
     session.flush()
 
-    unsent.status = BriefVersionStatus.SENT
-    unsent.arbiter_review_id = review.id
-    brief.current_version = unsent.version
-    _sync_brief_from_version(session, brief, unsent, state_changed_by=user_id)
+    unfinalized.status = BriefVersionStatus.FINAL
+    unfinalized.arbiter_review_id = review.id
+    brief.current_version = unfinalized.version
+    _sync_brief_from_version(session, brief, unfinalized, state_changed_by=user_id)
     brief.downstream_state = BriefDownstreamState.OPENED
 
     _create_feedback(

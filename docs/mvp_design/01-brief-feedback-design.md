@@ -69,8 +69,8 @@ editing ──(send)──→ sent ──(send)──→ sent    // 替换邀约
 ### 1.3.1 version 与 state 解耦
 
 **核心原则：version 生命周期和 brief 状态机是两条独立的线，`send`（邀约阶段）和 `update`（合约期间）是两座桥梁。**
-- sent 后，breif 和 version 关联起来，如果被 rejected，依然关联，这时 version 状态是 sent
-- version.sent 代表 version 不能随便修改了
+- sent 后，breif 和 version 关联起来，如果被 rejected，依然关联，这时 version 状态是 final
+- version.final 代表 version 不能随便修改了
 - brief.version 代表 brief 和 version 的关联
 - brief.upstream_state & brief.downstream_state 代表 brief状态
 
@@ -78,7 +78,7 @@ editing ──(send)──→ sent ──(send)──→ sent    // 替换邀约
 |------|--------|---------------------------------------------|
 | patch | 只改 version.status 和内容 | 不碰 upstream_state / downstream_state        |
 | submit-review | 只改 version.status | draft → reviewed，不碰 brief 状态                |
-| send | 桥梁：version → sent + brief 状态变更 | 唯一同时操作两边的动作，version必须是reviewed状态（或者是sent状态） |
+| send | 桥梁：version → final + brief 状态变更 | 唯一同时操作两边的动作，version必须是reviewed状态（或者是final状态） |
 | accept / reject / cancel / suspend / resume / approve / reject_submit | 只改 brief 状态 | 不碰 version                                  |
 | process / submit / open / delegate / block | 只改 brief 状态 | 不碰 version                                  |
 
@@ -97,7 +97,7 @@ editing ──(send)──→ sent ──(send)──→ sent    // 替换邀约
 
 > **version 必须处于 reviewed 状态**（与 send 相同）。update 前需先 submit-review 通过审查。
 
-> sent 状态下也允许 send：upstream 发出邀约后、downstream 响应前，upstream 可以修改并重新发送，代价更小（还没建立合约）。draft 可以先准备着，随时 send 替换。
+> final 状态下也允许 send：upstream 发出邀约后、downstream 响应前，upstream 可以修改并重新发送，代价更小（还没建立合约）。
 
 **patch 的版本行为（只看 version.status，不看 brief 状态）：**
 
@@ -105,7 +105,7 @@ editing ──(send)──→ sent ──(send)──→ sent    // 替换邀约
 |---------------|-----------|
 | draft | 原地修改，version 不变 |
 | reviewed | 原地修改，status 重置为 draft |
-| sent | 不能修改，自动创建新版本 v(n+1) draft；如已存在 v(n+1) 则报错 |
+| final | 不能修改，自动创建新版本 v(n+1) draft；如已存在 v(n+1) 则报错 |
 
 > patch 不需要检查 upstream_state。只要 upstream_state 不是 cancelled/done（终态），upstream 随时可以 patch 编辑版本内容。
 
@@ -125,11 +125,11 @@ editing ──(send)──→ sent ──(send)──→ sent    // 替换邀约
 
 ### 1.5 关键设计决策
 
-- **version 与 state 解耦**：version 生命周期（draft/reviewed/sent）和 brief 状态机（upstream_state + downstream_state）是两条独立的线。patch 和 submit-review 只操作 version，不碰 brief 状态；accept/cancel/suspend 等只操作 brief 状态，不碰 version。`send` 是唯一同时操作两边的桥梁
+- **version 与 state 解耦**：version 生命周期（draft/reviewed/final）和 brief 状态机（upstream_state + downstream_state）是两条独立的线。patch 和 submit-review 只操作 version，不碰 brief 状态；accept/cancel/suspend 等只操作 brief 状态，不碰 version。`send` 是唯一同时操作两边的桥梁
 - **双状态替代单状态**：`upstream_state` + `downstream_state` 替代原来的单一 `status`（11 enum）。视角归属在数据模型层面表达，无需文档补充说明
 - **`previous_status` 不再需要**：suspend 只改 `upstream_state` → suspended，`downstream_state` 自然保留不动；resume 时 `upstream_state` → in_process，`downstream_state` 原样恢复。不再需要额外字段记录"之前的状态"
 - **`editing` 替代 brief 层级 draft/reviewed**：draft/reviewed 只在 `brief_versions.status`，brief 层级统一用 `editing` 表达"upstream 正在编写"
-- **`update` 独立于 `send`**：send 用于邀约阶段（editing/sent，记录在 transfer_history），update 用于合约期间（in_process，记录在 feedbacks）。两者对 version 的操作相同（version→sent, current_version 更新），但记录位置不同——send 是初始交接，update 是合约期通知
+- **`update` 独立于 `send`**：send 用于邀约阶段（editing/sent，记录在 transfer_history），update 用于合约期间（in_process，记录在 feedbacks）。两者对 version 的操作相同（version→final, current_version 更新），但记录位置不同——send 是初始交接，update 是合约期通知
 - **`opened` 替代 `accepted` + `reopened`**：多条路径汇入 opened（首次接单、上游打回、上游推送更新、下游从 submitted 自行撤回、从 delegated/block 解除），用 `opened` 比用 `accepted` 更中性
 - **downstream 自由控制 downstream_state**：downstream 可从任意下游状态切换到 opened/delegated/blocked/submitted（只要 upstream_state = in_process），不需要为每个动作起独立名字
 - **upstream `update` 强制 downstream_state → opened**：需求变更后下游必须基于新版本重新执行，无论下游当时处于什么状态
@@ -159,21 +159,21 @@ editing ──(send)──→ sent ──(send)──→ sent    // 替换邀约
 
 Brief 是合约，操作是审慎的。前端根据当前用户角色 + brief 状态 + version 状态，显示可用动作。
 
-**get_brief 返回 `unsent_version` 字段**（版本号，非 id）：
-- current_version = null → 返回最新 draft 版本内容，unsent_version = 该版本号
-- current_version = N，存在 N+1 draft → 返回 vN 内容（sent），unsent_version = N+1
-- current_version = N，无更高版本 → 返回 vN 内容，unsent_version = null
+**get_brief 返回 `unfinalized_version` 字段**（版本号，非 id）：
+- current_version = null → 返回最新 draft 版本内容，unfinalized_version = 该版本号
+- current_version = N，存在 N+1 draft → 返回 vN 内容（final），unfinalized_version = N+1
+- current_version = N，无更高版本 → 返回 vN 内容，unfinalized_version = null
 
 **前端行为按角色区分：**
 
 **downstream（自己 = assigned_to）：**
-- 只能查看关联版本（current_version 对应的 sent 版本），看不到 draft
+- 只能查看关联版本（current_version 对应的 final 版本），看不到 draft
 - upstream = sent → 支持 accept / reject
 - upstream ≠ cancelled / done / sent → 支持变更为 delegated / blocked / opened / submitted
 
 **upstream（自己 = created_by）：**
-- 打开关联版本（current_version 对应的 sent 版本）：
-  - upstream ≠ cancelled / done → 支持修改（patch 在 sent 上自动创建新 draft）
+- 打开关联版本（current_version 对应的 final 版本）：
+  - upstream ≠ cancelled / done → 支持修改（patch 在 final 上自动创建新 draft）
   - 如存在更高 draft 版本，前端自动 load 该版本（在此基础上修改）
   - 修改后打开的就是非关联版本（draft）
 - 打开非关联版本（draft）：
@@ -242,7 +242,7 @@ briefs {
   parent_id: GUID | null      -- 父 brief，null = 根节点
   is_root: boolean            -- true = 这是根 brief，也是 chain 的代表
 
-  current_version: number | null  -- 最新正式（已 sent）版本号；null = 还没 sent 任何版本
+  current_version: number | null  -- 最新正式（已 final）版本号；null = 还没有任何 final 版本
 
   upstream_state: enum         -- 6 个状态（见 1.1）
   downstream_state: enum | null -- 4 个状态 + null（见 1.1）
@@ -275,8 +275,8 @@ briefs {
 - **冗余人名字段**：`created_by_name` / `assigned_to_name` / `status_changed_by_name` 在创建/分配/状态变更时从 users 表读取并写入，列表查询不需要 JOIN。合约语义上，名字是操作时的快照——"当时签合约的人叫什么"，不是实时值。如果用户改名，合约上的名字不变（除非主动触发同步）
 
 **版本字段说明：**
-- `current_version` 是权威字段，语义为"最新 sent（正式）版本号"。初始值为 `null`（还没 sent 任何版本）；只有该版本被 sent 后才更新为版本号。所有读取方直接用 briefs 表，不需要 JOIN 版本表再筛选
-- `title` / `priority` 是 denormalize 字段，等于 `brief_versions WHERE version = current_version` 的对应值（`current_version = null` 时取 v1），新版本 sent 时同步更新。避免列表查询 JOIN 版本表
+- `current_version` 是权威字段，语义为"最新 final（正式）版本号"。初始值为 `null`（还没有任何 final 版本）；只有该版本被标记为 final 后才更新为版本号。所有读取方直接用 briefs 表，不需要 JOIN 版本表再筛选
+- `title` / `priority` 是 denormalize 字段，等于 `brief_versions WHERE version = current_version` 的对应值（`current_version = null` 时取 v1），新版本被标记为 final 时同步更新。避免列表查询 JOIN 版本表
 - `content` / `attachments` 不 denormalize（体积大，只有详情页需要，从 brief_versions 读）
 
 ---
@@ -293,7 +293,7 @@ brief_versions {
   status: enum                 -- 版本生命周期状态
   -- "draft":     upstream 编辑中，未交付（只对 upstream 可见，downstream 看不到）
   -- "reviewed":  Arbiter 审查通过，待交付
-  -- "sent":      已交付给 downstream（正式版本，有约束力）— 版本终态，不再变化
+  -- "final":      已交付给 downstream（正式版本，有约束力）— 版本终态，不再变化
 
   title: string
   content: string              -- 自由格式，不限制结构（Arbiter 管质量标准）
@@ -327,32 +327,32 @@ brief_versions {
 [新建 brief]          → v1: draft（briefs.current_version = null，upstream_state = editing）
 [upstream patch]      → v1: draft（原地修改，version 不变）
 [upstream 提交审查]    → v1: reviewed（arbiter_review_id 填入）
-[upstream send]       → v1: sent（briefs.current_version = 1，title/priority 同步）
+[upstream send]       → v1: final（briefs.current_version = 1，title/priority 同步）
                        upstream_state = sent, downstream_state = null
 
 [downstream accept]   → upstream_state = in_process, downstream_state = opened
 
-[upstream patch]      → v2: draft（v1 是 sent 不能改，自动创建 v2）
-[upstream update]     → v2: sent（briefs.current_version = 2，title/priority 同步）
+[upstream patch]      → v2: draft（v1 是 final 不能改，自动创建 v2）
+[upstream update]     → v2: final（briefs.current_version = 2，title/priority 同步）
                        downstream_state = opened（强制重开）
                        feedback(type=update) 创建
 ```
 
 **send 从 sent 状态发起（替换邀约）：**
 ```
-[upstream send from sent] → v2: sent（briefs.current_version = 2）
+[upstream send from sent] → v2: final（briefs.current_version = 2）
                            upstream_state 不变（仍为 sent），downstream_state 不变（null）
                            无 feedback（尚未建立合约）
                            transfer_history 新增记录
 ```
 
 **关键规则：**
-- `briefs.current_version` 初始值为 `null`（还没 sent 任何版本）；只有版本 status 变为 `sent` 时才更新为版本号，draft/reviewed 不影响
+- `briefs.current_version` 初始值为 `null`（还没有任何 final 版本）；只有版本 status 变为 `final` 时才更新为版本号，draft/reviewed 不影响
 - downstream 执行的"当前正式版本" = `briefs.current_version`，不需要查 brief_versions 的 status
-- `sent` 是版本终态，不再变化；新版本 sent 后，旧版本通过 `briefs.current_version` 增大自动作废，无需显式标记
-- patch 只看 version.status：draft/reviewed → 原地改（reviewed 重置为 draft）；sent → 创建新版本
-- send 是邀约阶段桥梁：version → sent 同时触发 brief 状态变更（首次发送/替换邀约，记录在 transfer_history）；update 是合约期间桥梁：version → sent + downstream → opened（记录在 feedbacks）
-- send / update 走完整 Arbiter 审查（draft → reviewed → sent），MVP: auto-pass
+- `final` 是版本终态，不再变化；新版本 final 后，旧版本通过 `briefs.current_version` 增大自动作废，无需显式标记
+- patch 只看 version.status：draft/reviewed → 原地改（reviewed 重置为 draft）；final → 创建新版本
+- send 是邀约阶段桥梁：version → final 同时触发 brief 状态变更（首次发送/替换邀约，记录在 transfer_history）；update 是合约期间桥梁：version → final + downstream → opened（记录在 feedbacks）
+- send / update 走完整 Arbiter 审查（draft → reviewed → final），MVP: auto-pass
 
 ---
 
@@ -511,11 +511,11 @@ feedbacks {
 
 | | reject_submit | update |
 |---|--------------|--------|
-| brief 内容 | 不变 | **新版本 sent**（version +1，旧版本自动作废） |
+| brief 内容 | 不变 | **新版本 final**（version +1，旧版本自动作废） |
 | 场景 | "验收标准没达到，继续改" | "需求变了，按新版本重新做" |
 | downstream 看到 | 原版本 + 打回原因 | 新版本 + 变更说明 |
-| briefs.current_version | 不变 | +1（新版本 sent 时更新） |
-| 版本生命周期 | 不涉及新版本 | draft → reviewed → sent（走完整 Arbiter 审查） |
+| briefs.current_version | 不变 | +1（新版本被标记为 final 时更新） |
+| 版本生命周期 | 不涉及新版本 | draft → reviewed → final（走完整 Arbiter 审查） |
 | downstream 是否可以 block | 不可以（打回是强制动作） | 可以（block 原因："不接受更新"） |
 | API 端点 | upstream-actions?action=reject_submit | upstream-actions?action=update |
 

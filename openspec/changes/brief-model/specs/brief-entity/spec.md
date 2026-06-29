@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Brief entity stores tree structure and dual lifecycle state
-The system SHALL provide a `Brief` SQLAlchemy model that stores the brief identifier, root identifier, parent identifier, current sent version, upstream state, downstream state, denormalized title and priority, expected completion time, creator and assignee identifiers and name snapshots, state-change tracking with operator name snapshot, and timestamps.
+The system SHALL provide a `Brief` SQLAlchemy model that stores the brief identifier, root identifier, parent identifier, current final version, upstream state, downstream state, denormalized title and priority, expected completion time, creator and assignee identifiers and name snapshots, state-change tracking with operator name snapshot, and timestamps.
 
 #### Scenario: Create a root brief
 - **WHEN** an upstream user creates a root brief

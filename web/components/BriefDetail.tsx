@@ -24,7 +24,7 @@ export interface BriefDetail {
   current_version_status: string | null;
   version: number;
   is_current: boolean;
-  unsent_version: number | null;
+  unfinalized_version: number | null;
   status_changed_by_id: string;
   status_changed_by_name: string;
   status_changed_at: string;
@@ -113,9 +113,9 @@ export default function BriefDetailView({
             {truncateTitle(brief.title)}
           </h1>
 
-          {!isViewingDraft && isCreator && baseBrief?.unsent_version && (
+          {!isViewingDraft && isCreator && baseBrief?.unfinalized_version && (
             <a
-              href={`/briefs/${brief.brief_id}?version=${baseBrief.unsent_version}`}
+              href={`/briefs/${brief.brief_id}?version=${baseBrief.unfinalized_version}`}
               className="badge badge-draft version-link"
             >
               Draft

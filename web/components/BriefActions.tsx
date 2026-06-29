@@ -892,7 +892,7 @@ export default function BriefActions({
       );
     }
 
-    if (upstreamState === "editing" && currentVersionStatus === "sent") {
+    if (upstreamState === "editing" && currentVersionStatus === "final") {
       return (
         <div className="detail-header-actions-group">
           <button

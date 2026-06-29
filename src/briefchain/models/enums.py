@@ -28,7 +28,7 @@ class BriefVersionStatus(StrEnum):
 
     DRAFT = "draft"
     REVIEWED = "reviewed"
-    SENT = "sent"
+    FINAL = "final"
 
 
 class BriefPriority(StrEnum):

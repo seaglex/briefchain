@@ -46,12 +46,12 @@ def test_get_brief_latest_version(
     assert data["is_current"] is False
 
 
-def test_patch_brief_modifies_unsent_version(
+def test_patch_brief_modifies_unfinalized_version(
     client: TestClient,
     auth_headers_creator: dict[str, str],
     draft_brief: Brief,
 ) -> None:
-    """Patching a never-sent brief modifies the draft version in place."""
+    """Patching a never-finalized brief modifies the draft version in place."""
     response = client.post(
         f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=patch",
         headers=auth_headers_creator,
@@ -120,7 +120,7 @@ def test_resend_brief_after_rejection(
     downstream,
     other_user,
 ) -> None:
-    """Creator can resend a previously-sent version after downstream rejection."""
+    """Creator can resend a previously-final version after downstream rejection."""
     client.post(
         f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=submit-review",
         headers=auth_headers_creator,

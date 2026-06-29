@@ -15,7 +15,7 @@
 - [x] 3.1 Create `src/briefchain/models/enums.py`
 - [x] 3.2 Define `BriefUpstreamState` enum with editing/sent/in_process/suspended/cancelled/done values
 - [x] 3.3 Define `BriefDownstreamState` enum with opened/delegated/blocked/submitted values (nullable in model)
-- [x] 3.4 Define `BriefVersionStatus` enum with draft/reviewed/sent values
+- [x] 3.4 Define `BriefVersionStatus` enum with draft/reviewed/final values
 - [x] 3.5 Define `BriefPriority` enum with p0/p1/p2/p3 values
 - [x] 3.6 Define `FeedbackType` enum with direction-aware values (cancel/suspend/resume/approve/reject_submit/update for upstream→downstream; submit/block/delegate/open/progress for downstream→upstream)
 - [x] 3.7 Define `ArbiterReviewStatus` enum with passed/failed/force_skipped values

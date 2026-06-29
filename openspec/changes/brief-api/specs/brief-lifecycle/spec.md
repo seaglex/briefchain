@@ -64,15 +64,15 @@ The system SHALL allow the creator to reject a submitted brief and force downstr
 - **THEN** the system returns a 409 error
 
 ### Requirement: Push updated brief version
-The system SHALL allow the creator to send an existing reviewed unsent version to downstream, forcing downstream to reopen it.
+The system SHALL allow the creator to send an existing reviewed unfinalized version to downstream, forcing downstream to reopen it.
 
 #### Scenario: Successful update
-- **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/upstream-actions?action=update` with a required `version` (the reviewed unsent version number), optional new version fields, and a required `content` change note
+- **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/upstream-actions?action=update` with a required `version` (the reviewed unfinalized version number), optional new version fields, and a required `content` change note
 - **THEN** the system
   - validates that the requested `version` belongs to the brief and is in `reviewed` status,
   - uses that existing reviewed version,
-  - transitions that version's status to `sent`,
-  - updates `briefs.current_version` to that version and synchronizes `briefs.title` / `priority` / `expected_completion_at` to the sent version,
+  - transitions that version's status to `final`,
+  - updates `briefs.current_version` to that version and synchronizes `briefs.title` / `priority` / `expected_completion_at` to the final version,
   - leaves `briefs.upstream_state` unchanged,
   - sets `downstream_state` to "opened",
   - updates `status_changed_at` / `status_changed_by`,
