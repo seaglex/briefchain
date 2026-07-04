@@ -19,6 +19,8 @@ from briefchain.api.routes import (
     chains,
     feedbacks,
     invites,
+    kanban,
+    tasks,
     users,
 )
 
@@ -45,6 +47,11 @@ def create_app() -> FastAPI:
     app.include_router(feedbacks.feedback_router, prefix="/api/v1")
     app.include_router(chains.router, prefix="/api/v1")
     app.include_router(invites.router, prefix="/api/v1")
+    app.include_router(tasks.router, prefix="/api/v1")
+    app.include_router(tasks.comments_router, prefix="/api/v1")
+    app.include_router(kanban.board_router, prefix="/api/v1")
+    app.include_router(kanban.kanban_router, prefix="/api/v1")
+    app.include_router(kanban.template_router, prefix="/api/v1")
 
     @app.get("/health", status_code=status.HTTP_200_OK, tags=["health"])
     def health_check() -> dict:

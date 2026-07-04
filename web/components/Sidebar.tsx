@@ -55,9 +55,18 @@ function SidebarInner() {
         <div className={navItemClass(false)}>
           <span>Chains</span>
         </div>
-        <div className={navItemClass(false)}>
-          <span>工作看板</span>
-        </div>
+        <Link
+          href="/kanban"
+          className={navItemClass(pathname === "/kanban" || pathname === "/kanban/config")}
+        >
+          <span>个人 kanban</span>
+        </Link>
+        <Link
+          href="/kanban?create=true"
+          className={navItemClass(false)}
+        >
+          <span>创建 Task</span>
+        </Link>
 
         <div className="nav-divider" />
 

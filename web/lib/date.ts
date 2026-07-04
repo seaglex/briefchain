@@ -42,3 +42,28 @@ export function isoToLocalDateTime(isoValue: string | null | undefined): string 
     date.getDate()
   )}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
+
+/**
+ * Return true if the given due date is before the current time.
+ */
+export function isOverdue(isoValue: string | null | undefined): boolean {
+  if (!isoValue) return false;
+  const date = new Date(isoValue);
+  if (isNaN(date.getTime())) return false;
+  return date.getTime() < Date.now();
+}
+
+/**
+ * Format an ISO 8601 string as a short local date/time string.
+ */
+export function formatDateTime(isoValue: string | null | undefined): string {
+  if (!isoValue) return "";
+  const date = new Date(isoValue);
+  if (isNaN(date.getTime())) return "";
+  return date.toLocaleString("zh-CN", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}

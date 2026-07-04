@@ -17,6 +17,13 @@ from briefchain.models.brief import (  # noqa: F401
 )
 from briefchain.models.feedback import Feedback, FeedbackArbiterReview  # noqa: F401
 from briefchain.models.invite import BriefInvite  # noqa: F401
+from briefchain.models.kanban import (  # noqa: F401
+    Kanban,
+    KanbanTemplate,
+    KanbanTemplateColumn,
+    Task,
+    TaskComment,
+)
 from briefchain.models.user import User, UserIdentity  # noqa: F401
 
 config = context.config

@@ -74,3 +74,53 @@ class UserType(StrEnum):
     OAUTH = "oauth"
     EXTERNAL = "external"
     TEMPORARY = "temporary"
+
+
+class TaskType(StrEnum):
+    """Types of executable task records."""
+
+    TASK = "task"
+    BUG = "bug"
+    SUB_TASK = "sub_task"
+
+
+class TaskStatus(StrEnum):
+    """Lifecycle status of a task."""
+
+    BACKLOG = "backlog"
+    TODO = "todo"
+    IN_PROGRESS = "in_progress"
+    IN_REVIEW = "in_review"
+    DONE = "done"
+
+
+class TaskPriority(StrEnum):
+    """Priority levels for a task."""
+
+    P0 = "p0"
+    P1 = "p1"
+    P2 = "p2"
+    P3 = "p3"
+
+
+class KanbanTemplateMode(StrEnum):
+    """Rendering mode for a kanban template."""
+
+    SIMPLE = "simple"
+    CUSTOMIZED = "customized"
+
+
+class KanbanOwnerType(StrEnum):
+    """Owner scope for a kanban board."""
+
+    USER = "user"
+    TEAM = "team"
+
+
+class KanbanGroup(StrEnum):
+    """Swimlane grouping strategy for a kanban board."""
+
+    NONE = "none"
+    ASSIGNEE = "assignee"
+    BRIEF = "brief"
+    PRIORITY = "priority"
