@@ -70,6 +70,7 @@ export default async function BriefDetailPage({
           isViewingDraft={isViewingDraft}
           baseBrief={baseBrief}
           isCreator={isCreator}
+          currentUserId={currentUserId}
           actions={
             <BriefActions
               briefId={brief.brief_id}

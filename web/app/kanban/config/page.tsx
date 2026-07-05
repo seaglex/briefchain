@@ -53,7 +53,6 @@ export default async function KanbanConfigPage() {
         <KanbanConfigForm
           initialConfig={configResult.data}
           initialTemplates={templatesResult.ok ? templatesResult.data.templates : []}
-          currentUserId={userResult.user.id}
         />
       </div>
     </AppShell>

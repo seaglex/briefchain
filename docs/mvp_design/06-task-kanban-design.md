@@ -134,7 +134,7 @@ tasks {
 kanban_templates {
   kanban_template_id: int (auto-increment)  -- 主键（id=1 是全局默认模板）
 
-  name: string                              -- "默认模板" / "研发看板模板"
+  name: string                              -- "默认模板" / "研发看板模板"，不是 public 留空即可
   kanban_template_mode: enum                -- "simple" | "customized"
 
   created_by: GUID | null                   -- null = 系统预置
@@ -169,7 +169,7 @@ ELSE:
     → 直接修改当前 kanban_template 的 columns
 ```
 
-> 规则：公版/他人模板不可直接修改，列变更自动产生私有副本。`is_public=true` 且 `created_by=JWT.user_id` 是例外（自己分享的模板可直接改）。
+> 规则：他人模板不可直接修改，引用他人模板列变更自动产生私有副本。
 
 ### 2.3 kanbans
 

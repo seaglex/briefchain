@@ -40,6 +40,7 @@ export async function apiFetch<T>(
 ): Promise<{ ok: true; data: T } | { ok: false; message: string; code?: string }> {
   const response = await fetch(path, {
     ...options,
+    cache: options.cache ?? "no-store",
     headers: {
       "Content-Type": "application/json",
       ...options.headers,

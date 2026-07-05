@@ -2,15 +2,15 @@ import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/server-auth";
 import AppShell from "@/components/AppShell";
 import HeaderUser from "@/components/HeaderUser";
-import NewBriefForm from "@/components/NewBriefForm";
+import TaskDetail from "@/components/TaskDetail";
 
-export default async function NewBriefPage({
-  searchParams,
+export default async function TaskDetailPage({
+  params,
 }: {
-  searchParams: Promise<{ parent_id?: string }>;
+  params: Promise<{ taskId: string }>;
 }) {
+  const { taskId } = await params;
   const userResult = await getCurrentUser();
-  const { parent_id: parentId } = await searchParams;
 
   if (!userResult.ok) {
     redirect("/login");
@@ -20,16 +20,14 @@ export default async function NewBriefPage({
     <AppShell userType={userResult.user.user_type}>
       <div className="topbar">
         <div className="flex items-center gap-8">
-          <h2>新建 Brief</h2>
+          <h2>Task 详情</h2>
         </div>
         <div className="flex items-center gap-12">
           <HeaderUser userName={userResult.user.name} />
         </div>
       </div>
 
-      <div className="content">
-        <NewBriefForm parentId={parentId} />
-      </div>
+      <TaskDetail taskId={parseInt(taskId, 10)} currentUserId={userResult.user.id} />
     </AppShell>
   );
 }

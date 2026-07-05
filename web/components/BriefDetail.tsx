@@ -1,4 +1,7 @@
-import type { ReactNode } from "react";
+"use client";
+
+import { useState, type ReactNode } from "react";
+import CreateTaskModal from "./CreateTaskModal";
 
 export interface UserRef {
   id: string;
@@ -67,6 +70,7 @@ interface BriefDetailViewProps {
   isViewingDraft?: boolean;
   baseBrief?: BriefDetail | null;
   isCreator?: boolean;
+  currentUserId?: string;
 }
 
 const truncateTitle = (title: string, maxChars = 10): string => {
@@ -102,8 +106,22 @@ export default function BriefDetailView({
   isViewingDraft,
   baseBrief,
   isCreator,
+  currentUserId,
 }: BriefDetailViewProps) {
   const isAssociated = brief.assigned_to_id !== null;
+  const isAssignee = currentUserId !== undefined && brief.assigned_to_id === currentUserId;
+  const canCreateSubBriefOrTask =
+    isAssignee &&
+    !readOnly &&
+    (brief.upstream_state === "in_process" || brief.upstream_state === "suspended");
+  const [activeTab, setActiveTab] = useState<"content" | "transfers" | "feedback">("content");
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+
+  const tabs = [
+    { key: "content" as const, label: "内容" },
+    { key: "transfers" as const, label: `流转历史 (${transfers.length})` },
+    { key: "feedback" as const, label: `Feedback (${feedbacks.length})` },
+  ];
 
   return (
     <div data-readonly={readOnly}>
@@ -143,124 +161,167 @@ export default function BriefDetailView({
         {actions && <div className="detail-header-actions-wrap">{actions}</div>}
       </div>
 
-      <div className="card">
-        <div className="detail-content">
-          <h3 className="mb-12">内容</h3>
-          <p style={{ whiteSpace: "pre-wrap" }}>{brief.content}</p>
-
-          {brief.estimated_man_days !== null && (
-            <>
-              <h3 className="mb-12 mt-16">预估人天</h3>
-              <p>{brief.estimated_man_days}</p>
-            </>
-          )}
-
-          {brief.expected_completion_at && (
-            <>
-              <h3 className="mb-12 mt-16">预期完成时间</h3>
-              <p>{new Date(brief.expected_completion_at).toLocaleString("zh-CN")}</p>
-            </>
-          )}
-        </div>
+      <div className="detail-tabs">
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            className={`detail-tab ${activeTab === tab.key ? "active" : ""}`}
+            onClick={() => setActiveTab(tab.key)}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
-      <div style={{ marginTop: 24 }}>
-        <h3 className="mb-12">流转历史</h3>
-        {transfers.length === 0 ? (
-          <div className="card text-3">暂无流转记录</div>
-        ) : (
+      {activeTab === "content" && (
+        <>
           <div className="card">
-            <div className="timeline">
-              {transfers.map((transfer, index) => (
-                <div className="timeline-item" key={transfer.id}>
-                  <div className="timeline-dot" />
-                  {index < transfers.length - 1 && <div className="timeline-line" />}
-                  <div className="timeline-content">
+            <div className="detail-content">
+              <h3 className="mb-12">内容</h3>
+              <p style={{ whiteSpace: "pre-wrap" }}>{brief.content}</p>
+
+              {brief.estimated_man_days !== null && (
+                <>
+                  <h3 className="mb-12 mt-16">预估人天</h3>
+                  <p>{brief.estimated_man_days}</p>
+                </>
+              )}
+
+              {brief.expected_completion_at && (
+                <>
+                  <h3 className="mb-12 mt-16">预期完成时间</h3>
+                  <p>{new Date(brief.expected_completion_at).toLocaleString("zh-CN")}</p>
+                </>
+              )}
+            </div>
+          </div>
+
+          {canCreateSubBriefOrTask && (
+            <div className="mt-12" style={{ display: "flex", gap: "2ch" }}>
+              <a
+                href={`/briefs/new?parent_id=${brief.brief_id}`}
+                className="btn btn-primary"
+              >
+                创建子brief
+              </a>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => setIsTaskModalOpen(true)}
+              >
+                创建task
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {activeTab === "transfers" && (
+        <div>
+          {transfers.length === 0 ? (
+            <div className="card text-3">暂无流转记录</div>
+          ) : (
+            <div className="card">
+              <div className="timeline">
+                {transfers.map((transfer, index) => (
+                  <div className="timeline-item" key={transfer.id}>
+                    <div className="timeline-dot" />
+                    {index < transfers.length - 1 && <div className="timeline-line" />}
+                    <div className="timeline-content">
+                      <div className="flex items-center justify-between">
+                        <span>
+                          <strong>{transfer.from_user_name}</strong> 发送给{" "}
+                          <strong>{transfer.to_user_name}</strong>
+                        </span>
+                        <span
+                          className={`badge ${
+                            transfer.accepted_at
+                              ? "badge-accepted"
+                              : transfer.rejected_at
+                                ? "badge-cancelled"
+                                : "badge-sent"
+                          }`}
+                        >
+                          {transfer.accepted_at
+                            ? "accepted"
+                            : transfer.rejected_at
+                              ? "rejected"
+                              : "sent"}
+                        </span>
+                      </div>
+                      <div className="timeline-time mt-8">
+                        {new Date(transfer.sent_at).toLocaleString("zh-CN")} — v
+                        {transfer.brief_version}
+                      </div>
+                      {transfer.rejection_reason && (
+                        <div className="mt-8 text-2">
+                          原因：{transfer.rejection_reason}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "feedback" && (
+        <div>
+          {feedbacks.length === 0 ? (
+            <div className="card text-3">暂无 Feedback</div>
+          ) : (
+            <div className="card">
+              {feedbacks.map((feedback) => (
+                <div className="feedback-item" key={feedback.id}>
+                  <div
+                    className="feedback-type-icon"
+                    style={{
+                      background:
+                        feedback.type === "blocked"
+                          ? "var(--c-amber-bg)"
+                          : feedback.type === "submit"
+                            ? "var(--c-green-bg)"
+                            : "var(--c-primary-bg)",
+                      color:
+                        feedback.type === "blocked"
+                          ? "var(--c-amber)"
+                          : feedback.type === "submit"
+                            ? "var(--c-green)"
+                            : "var(--c-primary)",
+                    }}
+                  >
+                    {feedback.type === "blocked" ? "!" : feedback.type === "submit" ? "✓" : "•"}
+                  </div>
+                  <div className="flex-1">
                     <div className="flex items-center justify-between">
                       <span>
-                        <strong>{transfer.from_user_name}</strong> 发送给{" "}
-                        <strong>{transfer.to_user_name}</strong>
+                        <strong>{feedback.type}</strong>
+                        {" "}
+                        {feedback.is_to_down ? "→" : "←"}
+                        {" "}
+                        {feedback.from_user_name} → {feedback.to_user_name}
                       </span>
-                      <span
-                        className={`badge ${
-                          transfer.accepted_at
-                            ? "badge-accepted"
-                            : transfer.rejected_at
-                              ? "badge-cancelled"
-                              : "badge-sent"
-                        }`}
-                      >
-                        {transfer.accepted_at
-                          ? "accepted"
-                          : transfer.rejected_at
-                            ? "rejected"
-                            : "sent"}
+                      <span className="text-3" style={{ fontSize: 12 }}>
+                        {new Date(feedback.created_at).toLocaleString("zh-CN")}
                       </span>
                     </div>
-                    <div className="timeline-time mt-8">
-                      {new Date(transfer.sent_at).toLocaleString("zh-CN")} — v
-                      {transfer.brief_version}
-                    </div>
-                    {transfer.rejection_reason && (
-                      <div className="mt-8 text-2">
-                        原因：{transfer.rejection_reason}
-                      </div>
-                    )}
+                    <p className="text-2 mt-8">{feedback.content}</p>
                   </div>
                 </div>
               ))}
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
-      <div style={{ marginTop: 24 }}>
-        <h3 className="mb-12">Feedback</h3>
-        {feedbacks.length === 0 ? (
-          <div className="card text-3">暂无 Feedback</div>
-        ) : (
-          <div className="card">
-            {feedbacks.map((feedback) => (
-              <div className="feedback-item" key={feedback.id}>
-                <div
-                  className="feedback-type-icon"
-                  style={{
-                    background:
-                      feedback.type === "blocked"
-                        ? "var(--c-amber-bg)"
-                        : feedback.type === "submit"
-                          ? "var(--c-green-bg)"
-                          : "var(--c-primary-bg)",
-                    color:
-                      feedback.type === "blocked"
-                        ? "var(--c-amber)"
-                        : feedback.type === "submit"
-                          ? "var(--c-green)"
-                          : "var(--c-primary)",
-                  }}
-                >
-                  {feedback.type === "blocked" ? "!" : feedback.type === "submit" ? "✓" : "•"}
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center justify-between">
-                    <span>
-                      <strong>{feedback.type}</strong>
-                      {" "}
-                      {feedback.is_to_down ? "→" : "←"}
-                      {" "}
-                      {feedback.from_user_name} → {feedback.to_user_name}
-                    </span>
-                    <span className="text-3" style={{ fontSize: 12 }}>
-                      {new Date(feedback.created_at).toLocaleString("zh-CN")}
-                    </span>
-                  </div>
-                  <p className="text-2 mt-8">{feedback.content}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <CreateTaskModal
+        isOpen={isTaskModalOpen}
+        onClose={() => setIsTaskModalOpen(false)}
+        briefId={brief.brief_id}
+      />
 
       <div className="mt-16 text-3" style={{ fontSize: 12 }}>
         创建者：{brief.created_by_name} | 执行者：{brief.assigned_to_name || "--"} | 版本：v

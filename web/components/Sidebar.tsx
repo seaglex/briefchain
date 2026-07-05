@@ -53,25 +53,28 @@ function SidebarInner() {
         <div className="nav-divider" />
 
         <div className={navItemClass(false)}>
-          <span>Chains</span>
+          <span>Chains（未实现）</span>
         </div>
-        <Link
-          href="/kanban"
-          className={navItemClass(pathname === "/kanban" || pathname === "/kanban/config")}
-        >
-          <span>个人 kanban</span>
-        </Link>
+
+        <div className="nav-divider" />
+
         <Link
           href="/kanban?create=true"
           className={navItemClass(false)}
         >
           <span>创建 Task</span>
         </Link>
+        <Link
+          href="/kanban"
+          className={navItemClass(pathname === "/kanban" || pathname === "/kanban/config")}
+        >
+          <span>个人 kanban</span>
+        </Link>
 
         <div className="nav-divider" />
 
         <div className={navItemClass(false)}>
-          <span>设置</span>
+          <span>设置（未实现）</span>
         </div>
       </nav>
     </div>

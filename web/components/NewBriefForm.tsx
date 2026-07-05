@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { apiFetch, isNonEmpty } from "@/lib/auth";
 import { localDateTimeToISO } from "@/lib/date";
 
-export default function NewBriefForm() {
+export default function NewBriefForm({ parentId }: { parentId?: string }) {
   const router = useRouter();
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -43,6 +43,7 @@ export default function NewBriefForm() {
         expected_completion_at: expectedCompletionAt
           ? localDateTimeToISO(expectedCompletionAt)
           : null,
+        parent_id: parentId ?? null,
         attachments: [],
       }),
     });
@@ -58,6 +59,11 @@ export default function NewBriefForm() {
   return (
     <div className="card" style={{ maxWidth: 720 }}>
       {error && <div className="error-message mb-16">{error}</div>}
+      {parentId && (
+        <div className="mb-16 text-2" style={{ fontSize: 12 }}>
+          正在为父 Brief 创建子 Brief
+        </div>
+      )}
       <form onSubmit={handleSubmit}>
         <div className="form-group">
           <label htmlFor="title" className="form-label">标题</label>

@@ -14,13 +14,11 @@ import type {
 interface KanbanConfigFormProps {
   initialConfig: KanbanConfigResponse;
   initialTemplates: KanbanTemplateListItem[];
-  currentUserId: string;
 }
 
 export default function KanbanConfigForm({
   initialConfig,
   initialTemplates,
-  currentUserId,
 }: KanbanConfigFormProps) {
   const router = useRouter();
   const [config, setConfig] = useState<KanbanConfig>(initialConfig.kanban);
@@ -35,16 +33,15 @@ export default function KanbanConfigForm({
   );
   const [isPublic, setIsPublic] = useState(false);
   const [templateName, setTemplateName] = useState("");
+  const [isColumnsModified, setIsColumnsModified] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const isTemplateOwner = initialConfig.template.created_by === currentUserId;
-  const canPublish = isTemplateOwner;
 
   function updateColumn(index: number, patch: Partial<KanbanColumnConfig>) {
     setColumns((prev) =>
       prev.map((col, i) => (i === index ? { ...col, ...patch } : col))
     );
+    setIsColumnsModified(true);
   }
 
   async function handleTemplateChange(templateId: number) {
@@ -54,6 +51,7 @@ export default function KanbanConfigForm({
     );
     if (result.ok) {
       setColumns(result.data.columns);
+      setIsColumnsModified(false);
     }
   }
 
@@ -78,29 +76,30 @@ export default function KanbanConfigForm({
       return;
     }
 
-    const columnsResult = await apiFetch(`/api/kanbans/${config.kanban_id}/columns`, {
-      method: "PUT",
-      body: JSON.stringify({
-        name: canPublish && isPublic ? templateName : undefined,
-        kanban_template_mode: "simple",
-        is_public: canPublish && isPublic ? true : false,
-        columns: columns.map((col) => ({
-          column_id: col.column_id,
-          status_key: col.status_key,
-          name: col.name,
-          color: col.color,
-          is_hidden: col.is_hidden,
-          position: col.position,
-        })),
-      }),
-    });
+    if (isColumnsModified) {
+        const columnsResult = await apiFetch(`/api/kanbans/${config.kanban_id}/columns`, {
+          method: "PUT",
+          body: JSON.stringify({
+            name: isPublic ? templateName : "",
+            kanban_template_mode: "simple",
+            is_public: isPublic ? true : false,
+            columns: columns.map((col) => ({
+              column_id: col.column_id,
+              status_key: col.status_key,
+              name: col.name,
+              color: col.color,
+              is_hidden: col.is_hidden,
+              position: col.position,
+            })),
+          }),
+        });
+        if (!columnsResult.ok) {
+          setError(columnsResult.message);
+          return;
+        }
+    }
 
     setSaving(false);
-
-    if (!columnsResult.ok) {
-      setError(columnsResult.message);
-      return;
-    }
 
     router.push("/kanban");
   }
@@ -119,15 +118,23 @@ export default function KanbanConfigForm({
         </div>
 
         <div className="form-group">
-          <label className="form-label">模板</label>
+          <label className="form-label">
+            模板
+            {isColumnsModified && (
+              <span className="text-3 ml-8">（正在修改）</span>
+            )}
+          </label>
           <select
-            value={selectedTemplateId}
+            value={String(selectedTemplateId)}
             onChange={(e) => handleTemplateChange(parseInt(e.target.value, 10))}
             disabled={saving}
           >
             {templates.map((t) => (
-              <option key={t.kanban_template_id} value={t.kanban_template_id}>
-                {t.name}
+              <option
+                key={t.kanban_template_id}
+                value={String(t.kanban_template_id)}
+              >
+                {t.name || "private"}
               </option>
             ))}
           </select>
@@ -157,6 +164,12 @@ export default function KanbanConfigForm({
         <div className="form-group">
           <label className="form-label">列配置</label>
           <div className="kanban-config-columns">
+            <div className="kanban-config-column kanban-config-column-header">
+              <span className="text-3">名称</span>
+              <span className="text-3">颜色</span>
+              <span className="text-3">状态</span>
+              <span className="text-3">Hidden</span>
+            </div>
             {columns.map((col, index) => (
               <div key={col.column_id ?? col.status_key} className="kanban-config-column">
                 <input
@@ -172,21 +185,28 @@ export default function KanbanConfigForm({
                   disabled={saving}
                 />
                 <span className="text-3">{col.status_key}</span>
+                <input
+                  type="checkbox"
+                  checked={col.is_hidden}
+                  onChange={(e) => updateColumn(index, { is_hidden: e.target.checked })}
+                  disabled={saving}
+                />
               </div>
             ))}
           </div>
         </div>
 
-        {canPublish && (
-          <div className="form-group">
-            <label className="flex items-center gap-8">
+        {isColumnsModified && (
+          <div className="form-group flex" style={{ flexDirection: "column", gap: 8 }}>
+            <label className="flex items-center cursor-pointer" style={{ gap: 8 }}>
               <input
                 type="checkbox"
                 checked={isPublic}
                 onChange={(e) => setIsPublic(e.target.checked)}
                 disabled={saving}
+                style={{ width: "auto" }}
               />
-              保存为公开模板
+              <span> 保存为公开模板</span>
             </label>
             {isPublic && (
               <input
@@ -195,7 +215,6 @@ export default function KanbanConfigForm({
                 value={templateName}
                 onChange={(e) => setTemplateName(e.target.value)}
                 disabled={saving}
-                className="mt-8"
               />
             )}
           </div>

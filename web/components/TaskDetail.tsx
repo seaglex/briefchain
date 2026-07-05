@@ -1,16 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { apiFetch, isNonEmpty } from "@/lib/auth";
 import { formatDateTime, isoToLocalDateTime, isOverdue, localDateTimeToISO } from "@/lib/date";
 import type { TaskComment, TaskDetailResponse } from "@/lib/kanban";
 import UserSelector from "./UserSelector";
+import CreateTaskModal from "./CreateTaskModal";
 
 interface TaskDetailProps {
   taskId: number;
   currentUserId: string;
-  onClose: () => void;
-  onDeleted?: () => void;
 }
 
 function priorityClass(priority: string): string {
@@ -19,11 +20,13 @@ function priorityClass(priority: string): string {
   return "badge-p3";
 }
 
-export default function TaskDetail({ taskId, currentUserId, onClose, onDeleted }: TaskDetailProps) {
+export default function TaskDetail({ taskId, currentUserId }: TaskDetailProps) {
+  const router = useRouter();
   const [data, setData] = useState<TaskDetailResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isCreateSubtaskOpen, setIsCreateSubtaskOpen] = useState(false);
 
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -98,8 +101,7 @@ export default function TaskDetail({ taskId, currentUserId, onClose, onDeleted }
       setError(result.message);
       return;
     }
-    onDeleted?.();
-    onClose();
+    router.push("/kanban");
   }
 
   async function handleAddComment(event: React.FormEvent) {
@@ -143,24 +145,13 @@ export default function TaskDetail({ taskId, currentUserId, onClose, onDeleted }
   }
 
   if (loading && !data) {
-    return (
-      <div className="modal-overlay">
-        <div modal-card>
-          <div className="modal-body">加载中...</div>
-        </div>
-      </div>
-    );
+    return <div className="content">加载中...</div>;
   }
 
   if (!data) {
     return (
-      <div className="modal-overlay">
-        <div modal-card>
-          <div className="modal-body">
-            {error && <div className="error-message">{error}</div>}
-            <button className="btn" onClick={onClose}>关闭</button>
-          </div>
-        </div>
+      <div className="content">
+        {error && <div className="error-message mb-16">{error}</div>}
       </div>
     );
   }
@@ -171,120 +162,147 @@ export default function TaskDetail({ taskId, currentUserId, onClose, onDeleted }
   const canEdit = isCreator || isAssignee;
 
   return (
-    <div className="modal-overlay">
-      <div className="modal-card modal-wide">
-        <div className="modal-header">
-          <h3>Task 详情</h3>
-          <div className="flex gap-8">
-            {isCreator && (
-              <button type="button" className="btn btn-danger" onClick={handleDelete} disabled={saving}>
-                删除
-              </button>
-            )}
-            <button type="button" className="btn btn-sm" onClick={onClose} disabled={saving}>
-              关闭
-            </button>
-          </div>
+    <div className="content">
+      <div className="flex items-center justify-between mb-16">
+        <div className="flex items-center gap-8">
+          <h2>{task.title}
+          {task.brief_id && (
+            <Link
+              href={`/briefs/${task.brief_id}`}
+              className="badge badge-reviewed version-link"
+            >
+              关联 Brief
+            </Link>
+          )}
+          </h2>
         </div>
-        <div className="modal-body">
-          {error && <div className="error-message mb-16">{error}</div>}
-          <form onSubmit={handleSave}>
-            <div className="form-group">
-              <label className="form-label">标题</label>
-              <input value={title} onChange={(e) => setTitle(e.target.value)} disabled={!canEdit || saving} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">内容</label>
-              <textarea value={content} onChange={(e) => setContent(e.target.value)} disabled={!canEdit || saving} rows={4} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">状态</label>
-              <select value={status} onChange={(e) => setStatus(e.target.value)} disabled={!canEdit || saving}>
-                <option value="todo">待办</option>
-                <option value="in_progress">进行中</option>
-                <option value="in_review">审阅中</option>
-                <option value="done">已完成</option>
-              </select>
-            </div>
-            <div className="form-group">
-              <label className="form-label">优先级</label>
-              <select value={priority} onChange={(e) => setPriority(e.target.value)} disabled={!canEdit || saving}>
-                <option value="p0">P0</option>
-                <option value="p1">P1</option>
-                <option value="p2">P2</option>
-                <option value="p3">P3</option>
-              </select>
-            </div>
-            <div className="form-group">
-              <label className="form-label">执行人</label>
-              <UserSelector selectedUserId={assigneeId} onSelect={setAssigneeId} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">预估工时</label>
-              <input type="number" min="0" value={estimatedHours} onChange={(e) => setEstimatedHours(e.target.value)} disabled={!canEdit || saving} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">实际工时</label>
-              <input type="number" min="0" value={actualHours} onChange={(e) => setActualHours(e.target.value)} disabled={!canEdit || saving} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">截止日期</label>
-              <input type="datetime-local" value={dueDate} onChange={(e) => setDueDate(e.target.value)} disabled={!canEdit || saving} />
-              {isOverdue(task.due_date) && <span className="error-message">已超时</span>}
-            </div>
-            {canEdit && (
-              <div className="flex gap-8 mb-24">
-                <button type="submit" className="btn btn-primary" disabled={saving}>
-                  {saving ? "保存中..." : "保存"}
-                </button>
-              </div>
-            )}
-          </form>
-
-          <div className="mb-24">
-            <h3 className="mb-12">子任务</h3>
-            {data.sub_tasks.length === 0 && <div className="text-3">暂无子任务</div>}
-            {data.sub_tasks.map((sub) => (
-              <div key={sub.task_id} className="card mb-8">
-                <span className={`badge ${priorityClass(sub.priority)}`}>{sub.priority.toUpperCase()}</span>
-                <span className="ml-8">{sub.title}</span>
-              </div>
-            ))}
-          </div>
-
-          <div>
-            <h3 className="mb-12">评论</h3>
-            <form onSubmit={handleAddComment} className="form-group">
-              <textarea
-                value={commentContent}
-                onChange={(e) => setCommentContent(e.target.value)}
-                placeholder="添加评论..."
-                rows={2}
-              />
-              <button type="submit" className="btn btn-primary btn-sm mt-8">发表评论</button>
-            </form>
-            <div className="mt-16">
-              {data.comments.map((comment) => (
-                <CommentItem
-                  key={comment.id}
-                  comment={comment}
-                  currentUserId={currentUserId}
-                  isEditing={editingCommentId === comment.id}
-                  editingContent={editingContent}
-                  setEditingContent={setEditingContent}
-                  onStartEdit={() => {
-                    setEditingCommentId(comment.id);
-                    setEditingContent(comment.content);
-                  }}
-                  onCancelEdit={() => setEditingCommentId(null)}
-                  onUpdate={() => handleUpdateComment(comment.id)}
-                  onDelete={() => handleDeleteComment(comment.id)}
-                />
-              ))}
-            </div>
-          </div>
+        <div className="flex items-center gap-16">
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={() => setIsCreateSubtaskOpen(true)}
+            disabled={saving}
+          >
+            创建子任务
+          </button>
+          {canEdit && (
+            <button type="submit" form="task-form" className="btn btn-primary btn-sm" disabled={saving}>
+              {saving ? "保存中..." : "保存"}
+            </button>
+          )}
+          {isCreator && (
+            <button type="button" className="btn btn-danger btn-sm" onClick={handleDelete} disabled={saving}>
+              删除
+            </button>
+          )}
         </div>
       </div>
+
+      {error && <div className="error-message mb-16">{error}</div>}
+
+      <form id="task-form" onSubmit={handleSave}>
+        <div className="form-group">
+          <label className="form-label">标题</label>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} disabled={!canEdit || saving} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">内容</label>
+          <textarea value={content} onChange={(e) => setContent(e.target.value)} disabled={!canEdit || saving} rows={4} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">状态</label>
+          <select value={status} onChange={(e) => setStatus(e.target.value)} disabled={!canEdit || saving}>
+            <option value="todo">待办</option>
+            <option value="in_progress">进行中</option>
+            <option value="in_review">审阅中</option>
+            <option value="done">已完成</option>
+          </select>
+        </div>
+        <div className="form-group">
+          <label className="form-label">优先级</label>
+          <select value={priority} onChange={(e) => setPriority(e.target.value)} disabled={!canEdit || saving}>
+            <option value="p0">P0</option>
+            <option value="p1">P1</option>
+            <option value="p2">P2</option>
+            <option value="p3">P3</option>
+          </select>
+        </div>
+        <div className="form-group">
+          <label className="form-label">执行人</label>
+          <UserSelector selectedUserId={assigneeId} onSelect={setAssigneeId} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">预估工时</label>
+          <input type="number" min="0" value={estimatedHours} onChange={(e) => setEstimatedHours(e.target.value)} disabled={!canEdit || saving} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">实际工时</label>
+          <input type="number" min="0" value={actualHours} onChange={(e) => setActualHours(e.target.value)} disabled={!canEdit || saving} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">截止日期</label>
+          <input type="datetime-local" value={dueDate} onChange={(e) => setDueDate(e.target.value)} disabled={!canEdit || saving} />
+          {isOverdue(task.due_date) && <span className="error-message">已超时</span>}
+        </div>
+      </form>
+
+      <div className="mb-24">
+        <h3 className="mb-12">子任务</h3>
+        {data.sub_tasks.length === 0 && <div className="text-3">暂无子任务</div>}
+        {data.sub_tasks.map((sub) => (
+          <div key={sub.task_id} className="card mb-8">
+            <span className={`badge ${priorityClass(sub.priority)}`}>{sub.priority.toUpperCase()}</span>
+            <Link href={`/tasks/${sub.task_id}`} className="ml-8">
+              {sub.title}
+            </Link>
+          </div>
+        ))}
+      </div>
+
+      <div>
+        <h3 className="mb-12">评论</h3>
+        <form onSubmit={handleAddComment} className="form-group">
+          <textarea
+            value={commentContent}
+            onChange={(e) => setCommentContent(e.target.value)}
+            placeholder="添加评论..."
+            rows={2}
+          />
+          <button type="submit" className="btn btn-primary btn-sm mt-8">发表评论</button>
+        </form>
+        <div className="mt-16">
+          {data.comments.map((comment) => (
+            <CommentItem
+              key={comment.id}
+              comment={comment}
+              currentUserId={currentUserId}
+              isEditing={editingCommentId === comment.id}
+              editingContent={editingContent}
+              setEditingContent={setEditingContent}
+              onStartEdit={() => {
+                setEditingCommentId(comment.id);
+                setEditingContent(comment.content);
+              }}
+              onCancelEdit={() => setEditingCommentId(null)}
+              onUpdate={() => handleUpdateComment(comment.id)}
+              onDelete={() => handleDeleteComment(comment.id)}
+            />
+          ))}
+        </div>
+      </div>
+
+      <CreateTaskModal
+        isOpen={isCreateSubtaskOpen}
+        onClose={() => setIsCreateSubtaskOpen(false)}
+        initialStatus={task.status}
+        parentTaskId={task.task_id}
+        briefId={task.brief_id}
+        teamId={task.team_id}
+        onCreated={() => {
+          setIsCreateSubtaskOpen(false);
+          loadDetail();
+        }}
+      />
     </div>
   );
 }

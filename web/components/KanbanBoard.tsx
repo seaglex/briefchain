@@ -17,7 +17,6 @@ import type { KanbanBoard as KanbanBoardType, TaskListItem } from "@/lib/kanban"
 import KanbanColumn from "./KanbanColumn";
 import KanbanTaskCard from "./KanbanTaskCard";
 import CreateTaskModal from "./CreateTaskModal";
-import TaskDetail from "./TaskDetail";
 
 interface KanbanBoardProps {
   initialBoard: KanbanBoardType;
@@ -51,10 +50,10 @@ export default function KanbanBoard({ initialBoard, currentUserId }: KanbanBoard
   const [board, setBoard] = useState<KanbanBoardType>(initialBoard);
   const [loading, setLoading] = useState(false);
   const [activeTask, setActiveTask] = useState<TaskListItem | null>(null);
-  const [detailTaskId, setDetailTaskId] = useState<number | null>(null);
-  const [createStatus, setCreateStatus] = useState<string | null>(() => {
-    return searchParams.get("create") === "true" ? "todo" : null;
-  });
+  const [createStatus, setCreateStatus] = useState<string | null>(null);
+  const createFromUrl = searchParams.get("create") === "true" ? "todo" : null;
+  const effectiveCreateStatus = createFromUrl ?? createStatus;
+
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
     const initial: Record<string, boolean> = {};
     for (const col of initialBoard.columns) {
@@ -84,6 +83,8 @@ export default function KanbanBoard({ initialBoard, currentUserId }: KanbanBoard
     setLoading(false);
     if (result.ok) {
       setBoard(result.data);
+    } else {
+      console.error("加载看板失败：", result.message);
     }
   }
 
@@ -126,6 +127,8 @@ export default function KanbanBoard({ initialBoard, currentUserId }: KanbanBoard
 
     if (result.ok) {
       await loadBoard();
+    } else {
+      console.error("拖拽更新失败：", result.message);
     }
   }
 
@@ -174,7 +177,7 @@ export default function KanbanBoard({ initialBoard, currentUserId }: KanbanBoard
                 key={column.status_key}
                 column={column}
                 tasks={tasks}
-                onOpenDetail={setDetailTaskId}
+                onOpenDetail={(taskId) => router.push(`/tasks/${taskId}`)}
                 onOpenCreate={setCreateStatus}
                 isCollapsed={collapsed[column.status_key]}
                 onToggleCollapse={() => toggleColumn(column.status_key)}
@@ -188,20 +191,11 @@ export default function KanbanBoard({ initialBoard, currentUserId }: KanbanBoard
       </DndContext>
 
       <CreateTaskModal
-        isOpen={createStatus !== null}
+        isOpen={effectiveCreateStatus !== null}
         onClose={closeCreateModal}
-        initialStatus={createStatus}
+        initialStatus={effectiveCreateStatus}
         onCreated={loadBoard}
       />
-
-      {detailTaskId !== null && (
-        <TaskDetail
-          taskId={detailTaskId}
-          currentUserId={currentUserId}
-          onClose={() => setDetailTaskId(null)}
-          onDeleted={loadBoard}
-        />
-      )}
     </div>
   );
 }

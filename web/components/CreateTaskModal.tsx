@@ -10,6 +10,8 @@ interface CreateTaskModalProps {
   onClose: () => void;
   initialStatus?: string | null;
   parentTaskId?: number | null;
+  briefId?: string | null;
+  teamId?: string | null;
   onCreated?: () => void;
 }
 
@@ -18,6 +20,8 @@ export default function CreateTaskModal({
   onClose,
   initialStatus,
   parentTaskId,
+  briefId,
+  teamId,
   onCreated,
 }: CreateTaskModalProps) {
   const [type, setType] = useState<"task" | "bug" | "sub_task">("task");
@@ -70,6 +74,8 @@ export default function CreateTaskModal({
       body: JSON.stringify({
         type,
         parent_task_id: type === "sub_task" ? parentTaskId : null,
+        brief_id: briefId ?? null,
+        team_id: teamId ?? null,
         title: title.trim(),
         content: content.trim() || null,
         status,
@@ -104,11 +110,16 @@ export default function CreateTaskModal({
           <form onSubmit={handleSubmit}>
             <div className="form-group">
               <label className="form-label">类型</label>
-              <select value={type} onChange={(e) => setType(e.target.value as typeof type)} disabled={loading}>
-                <option value="task">Task</option>
-                <option value="bug">Bug</option>
-                <option value="sub_task">Sub-task</option>
-              </select>
+              {parentTaskId ? (
+                <select value="sub_task" disabled>
+                  <option value="sub_task">Sub-task</option>
+                </select>
+              ) : (
+                <select value={type} onChange={(e) => setType(e.target.value as typeof type)} disabled={loading}>
+                  <option value="task">Task</option>
+                  <option value="bug">Bug</option>
+                </select>
+              )}
             </div>
 
             <div className="form-group">

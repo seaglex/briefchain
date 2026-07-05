@@ -27,6 +27,7 @@ export async function serverFetch<T>(
   const url = path.startsWith("http") ? path : `${API_BASE_URL}${path}`;
   const response = await fetch(url, {
     ...options,
+    cache: "no-store",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
@@ -82,13 +83,15 @@ export async function proxyWithToken(
   }
 
   const url = `${API_BASE_URL}${backendPath}`;
+  const actualMethod = method || request.method;
   let body: BodyInit | undefined;
-  if (method !== "GET" && method !== "HEAD") {
+  if (actualMethod !== "GET" && actualMethod !== "HEAD") {
     body = await request.text();
   }
 
   const response = await fetch(url, {
-    method: method || request.method,
+    method: actualMethod,
+    cache: "no-store",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
@@ -118,13 +121,15 @@ export async function proxyWithoutToken(
   method?: string
 ): Promise<Response> {
   const url = `${API_BASE_URL}${backendPath}`;
+  const actualMethod = method || request.method;
   let body: BodyInit | undefined;
-  if (method !== "GET" && method !== "HEAD") {
+  if (actualMethod !== "GET" && actualMethod !== "HEAD") {
     body = await request.text();
   }
 
   const response = await fetch(url, {
-    method: method || request.method,
+    method: actualMethod,
+    cache: "no-store",
     headers: {
       "Content-Type": "application/json",
     },

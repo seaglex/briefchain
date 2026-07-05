@@ -14,6 +14,7 @@
 Task 详情页
 - 所有关键信息、状态可以修改，创建者可以删除
 - 可以选择弹窗方式或者弹层方式
+- 查看详情时用普通页面方式
 
 个人 kanban - 不存在
 - 如果看板不存在：创建默认template，并打开
@@ -35,9 +36,9 @@ Task 详情页
   - 如果超时卡片变标红
 
 kanban 配置页
-- 选择模板（默认用 default 模板）
+- 选择模板（默认用 default 模板），私人的模板用`private`表示
 - 设置 泳道、done显示多少天以内
 - 各列 list
   - 修改列名、颜色（自动变成 simple 模式）
-- 如果 kanban_template owner 和 当前用户一致，且不是 public template，增加选项 [] 是否保存为公开模板，选中后增加 template_name 输入
+- 如果 columns 被改变了，增加选项 [] 是否保存为公开模板，选中后增加 template_name 输入
 - 下方有 `保存`按键

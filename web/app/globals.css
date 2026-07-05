@@ -166,6 +166,12 @@ textarea { resize: vertical; min-height: 80px; }
 .brief-tab:hover { color: var(--c-text); }
 .brief-tab.active { color: var(--c-primary); border-bottom-color: var(--c-primary); font-weight: 500; }
 
+/* Detail tabs */
+.detail-tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 0.5px solid var(--c-border); }
+.detail-tab { padding: 8px 16px; cursor: pointer; color: var(--c-text-2); border-bottom: 2px solid transparent; transition: all 0.15s; font-size: 13px; background: none; border-top: none; border-left: none; border-right: none; }
+.detail-tab:hover { color: var(--c-text); }
+.detail-tab.active { color: var(--c-primary); border-bottom-color: var(--c-primary); font-weight: 500; }
+
 /* Brief list item */
 .brief-item { display: flex; align-items: center; gap: 12px; padding: 12px 0; }
 .brief-item:hover { background: transparent; }
@@ -236,8 +242,8 @@ textarea { resize: vertical; min-height: 80px; }
 
 /* Kanban config */
 .kanban-config-columns { display: flex; flex-direction: column; gap: 8px; }
-.kanban-config-column { display: flex; gap: 8px; align-items: center; }
-.kanban-config-column input[type="text"] { flex: 1; }
+.kanban-config-column { display: grid; grid-template-columns: 1fr 48px auto auto; gap: 8px; align-items: center; }
+.kanban-config-column-header { font-weight: 500; }
 .kanban-config-column input[type="color"] { width: 48px; padding: 2px; }
 
 /* Comments */
