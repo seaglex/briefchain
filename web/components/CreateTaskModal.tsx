@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiFetch, isNonEmpty } from "@/lib/auth";
-import { isoToLocalDateTime, localDateTimeToISO } from "@/lib/date";
+import { isoToLocalDate, localDateToEndOfDayISO } from "@/lib/date";
 import UserSelector from "./UserSelector";
 
 interface CreateTaskModalProps {
@@ -82,7 +82,7 @@ export default function CreateTaskModal({
         priority,
         assignee_id: assigneeId,
         estimated_hours: estimatedHours ? parseInt(estimatedHours, 10) : null,
-        due_date: dueDate ? localDateTimeToISO(dueDate) : null,
+        due_date: dueDate ? localDateToEndOfDayISO(dueDate) : null,
       }),
     });
     setLoading(false);
@@ -171,7 +171,7 @@ export default function CreateTaskModal({
             <div className="form-group">
               <label className="form-label">截止日期</label>
               <input
-                type="datetime-local"
+                type="date"
                 value={dueDate}
                 onChange={(e) => setDueDate(e.target.value)}
                 disabled={loading}

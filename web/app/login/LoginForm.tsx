@@ -113,7 +113,9 @@ export default function LoginForm() {
             </Link>
           </p>
         </div>
+      </div>
 
+      <div className="login-slogans">
         <ProductSlogans />
       </div>
     </div>

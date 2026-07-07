@@ -169,7 +169,9 @@ export default function RegisterForm() {
             </Link>
           </p>
         </div>
+      </div>
 
+      <div className="login-slogans">
         <ProductSlogans />
       </div>
     </div>

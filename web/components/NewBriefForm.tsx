@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch, isNonEmpty } from "@/lib/auth";
-import { localDateTimeToISO } from "@/lib/date";
+import { localDateToEndOfDayISO } from "@/lib/date";
 import { BRIEF_TYPE_LABELS, type BriefType } from "@/lib/brief-types";
 
 export default function NewBriefForm({ parentId }: { parentId?: string }) {
@@ -44,7 +44,7 @@ export default function NewBriefForm({ parentId }: { parentId?: string }) {
         priority,
         estimated_man_days: estimatedManDays ? parseFloat(estimatedManDays) : null,
         expected_completion_at: expectedCompletionAt
-          ? localDateTimeToISO(expectedCompletionAt)
+          ? localDateToEndOfDayISO(expectedCompletionAt)
           : null,
         parent_id: parentId ?? null,
         attachments: [],
@@ -140,7 +140,7 @@ export default function NewBriefForm({ parentId }: { parentId?: string }) {
           <label htmlFor="expected_completion_at" className="form-label">预期完成时间</label>
           <input
             id="expected_completion_at"
-            type="datetime-local"
+            type="date"
             value={expectedCompletionAt}
             onChange={(e) => setExpectedCompletionAt(e.target.value)}
             disabled={loading}

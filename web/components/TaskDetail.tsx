@@ -4,7 +4,7 @@ import { useEffect, useState, Fragment } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { apiFetch, isNonEmpty } from "@/lib/auth";
-import { formatDateTime, isoToLocalDateTime, isOverdue, localDateTimeToISO } from "@/lib/date";
+import { formatDate, formatDateTime, isoToLocalDate, isOverdue, localDateToEndOfDayISO } from "@/lib/date";
 import type { TaskComment, TaskDetailResponse } from "@/lib/kanban";
 import UserSelector from "./UserSelector";
 import CreateTaskModal from "./CreateTaskModal";
@@ -72,7 +72,7 @@ export default function TaskDetail({ taskId, currentUserId, userName }: TaskDeta
     setAssigneeId(t.assignee_id);
     setEstimatedHours(t.estimated_hours?.toString() || "");
     setActualHours(t.actual_hours?.toString() || "");
-    setDueDate(isoToLocalDateTime(t.due_date));
+    setDueDate(isoToLocalDate(t.due_date));
     setError(null);
   }
 
@@ -97,7 +97,7 @@ export default function TaskDetail({ taskId, currentUserId, userName }: TaskDeta
         assignee_id: assigneeId,
         estimated_hours: estimatedHours ? parseInt(estimatedHours, 10) : null,
         actual_hours: actualHours ? parseInt(actualHours, 10) : null,
-        due_date: dueDate ? localDateTimeToISO(dueDate) : null,
+        due_date: dueDate ? localDateToEndOfDayISO(dueDate) : null,
       }),
     });
     setSaving(false);
@@ -276,7 +276,7 @@ export default function TaskDetail({ taskId, currentUserId, userName }: TaskDeta
         </div>
         <div className="form-group">
           <label className="form-label">截止日期</label>
-          <input type="datetime-local" value={dueDate} onChange={(e) => setDueDate(e.target.value)} disabled={!canEdit || saving} />
+          <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} disabled={!canEdit || saving} />
           {isOverdue(task.due_date) && <span className="error-message">已超时</span>}
         </div>
       </form>

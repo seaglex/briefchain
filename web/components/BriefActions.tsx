@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch, isNonEmpty } from "@/lib/auth";
-import { isoToLocalDateTime, localDateTimeToISO } from "@/lib/date";
+import { isoToLocalDate, localDateToEndOfDayISO } from "@/lib/date";
 import { sendBrief } from "@/lib/invites";
 import { BRIEF_TYPE_LABELS, type BriefType } from "@/lib/brief-types";
 import UserSelector from "@/components/UserSelector";
@@ -55,7 +55,7 @@ export default function BriefActions({
   const [editPriority, setEditPriority] = useState(priority);
   const [editEstimated, setEditEstimated] = useState(estimatedManDays?.toString() || "");
   const [editExpectedCompletion, setEditExpectedCompletion] = useState(
-    isoToLocalDateTime(expectedCompletionAt)
+    isoToLocalDate(expectedCompletionAt)
   );
   const [editReason, setEditReason] = useState("");
 
@@ -121,7 +121,7 @@ export default function BriefActions({
     setEditContent(content);
     setEditPriority(priority);
     setEditEstimated(estimatedManDays?.toString() || "");
-    setEditExpectedCompletion(isoToLocalDateTime(expectedCompletionAt));
+    setEditExpectedCompletion(isoToLocalDate(expectedCompletionAt));
     setEditReason("");
     setModal("edit");
   };
@@ -139,7 +139,7 @@ export default function BriefActions({
       priority: editPriority,
       estimated_man_days: editEstimated ? parseFloat(editEstimated) : null,
       expected_completion_at: editExpectedCompletion
-        ? localDateTimeToISO(editExpectedCompletion)
+        ? localDateToEndOfDayISO(editExpectedCompletion)
         : null,
       revision_reason: editReason.trim() || (editMode === "patch" ? "更新内容" : "版本更新"),
     };
@@ -399,7 +399,7 @@ export default function BriefActions({
                 <div className="form-group">
                   <label className="form-label">预期完成时间</label>
                   <input
-                    type="datetime-local"
+                    type="date"
                     value={editExpectedCompletion}
                     onChange={(e) => setEditExpectedCompletion(e.target.value)}
                     disabled={loading}

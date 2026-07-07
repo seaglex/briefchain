@@ -5,10 +5,9 @@ export default function LandingPage() {
   return (
     <div className="landing-page">
       <header className="landing-header">
-        <div className="landing-brand">
-          <div className="landing-brand-icon">B</div>
+        <Link href="/landing" className="landing-brand">
           <span className="landing-brand-name">BriefChain</span>
-        </div>
+        </Link>
         <div className="landing-actions">
           <Link href="/login" className="btn">登录</Link>
           <Link href="/register" className="btn btn-primary">注册</Link>

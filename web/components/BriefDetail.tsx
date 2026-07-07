@@ -2,7 +2,10 @@
 
 import { useState, type ReactNode } from "react";
 import { BRIEF_TYPE_LABELS, type BriefType } from "@/lib/brief-types";
+import { formatDate } from "@/lib/date";
+import BriefYamlMetadata from "./BriefYamlMetadata";
 import CreateTaskModal from "./CreateTaskModal";
+import MarkdownRenderer from "./MarkdownRenderer";
 
 export interface UserRef {
   id: string;
@@ -183,8 +186,14 @@ export default function BriefDetailView({
         <>
           <div className="card">
             <div className="detail-content">
-              <h3 className="mb-12">内容</h3>
-              <p style={{ whiteSpace: "pre-wrap" }}>{brief.content}</p>
+              <BriefYamlMetadata
+                title={brief.title}
+                priority={brief.priority}
+                estimated_man_days={brief.estimated_man_days}
+                expected_completion_at={brief.expected_completion_at}
+              />
+
+              <MarkdownRenderer content={brief.content} />
 
               {brief.estimated_man_days !== null && (
                 <>
@@ -196,7 +205,7 @@ export default function BriefDetailView({
               {brief.expected_completion_at && (
                 <>
                   <h3 className="mb-12 mt-16">预期完成时间</h3>
-                  <p>{new Date(brief.expected_completion_at).toLocaleString("zh-CN")}</p>
+                  <p>{formatDate(brief.expected_completion_at)}</p>
                 </>
               )}
             </div>

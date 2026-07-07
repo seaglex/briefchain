@@ -33,7 +33,9 @@ function InviteHeader({
   return (
     <header className="topbar" style={{ position: "sticky", top: 0, zIndex: 10 }}>
       <div className="flex items-center gap-12">
-        <div style={{ fontWeight: 700, fontSize: 20 }}>BriefChain</div>
+        <Link href="/landing" style={{ textDecoration: "none", color: "inherit" }}>
+          <div style={{ fontWeight: 700, fontSize: 20 }}>BriefChain</div>
+        </Link>
         <div className="text-2" style={{ fontSize: 12 }}>
           AI-reviewed briefs for smoother handoffs
         </div>
