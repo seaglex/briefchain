@@ -9,6 +9,7 @@ import BriefDetailView, {
   Transfer,
 } from "@/components/BriefDetail";
 import InviteActions from "@/components/InviteActions";
+import ProductSlogans from "@/components/ProductSlogans";
 import {
   getInvite,
   getInviteFeedbacks,
@@ -181,6 +182,8 @@ export default function InvitePage() {
                 <InviteActions token={token} brief={brief} onActionComplete={reload} />
               }
             />
+
+            <ProductSlogans />
           </div>
         </div>
       </div>

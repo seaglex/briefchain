@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch, isNonEmpty } from "@/lib/auth";
+import ProductSlogans from "@/components/ProductSlogans";
 
 export default function LoginForm() {
   const router = useRouter();
@@ -112,6 +113,8 @@ export default function LoginForm() {
             </Link>
           </p>
         </div>
+
+        <ProductSlogans />
       </div>
     </div>
   );

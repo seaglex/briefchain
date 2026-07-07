@@ -9,6 +9,7 @@ import {
   isValidEmail,
   MIN_PASSWORD_LENGTH,
 } from "@/lib/auth";
+import ProductSlogans from "@/components/ProductSlogans";
 
 export default function RegisterForm() {
   const router = useRouter();
@@ -168,6 +169,8 @@ export default function RegisterForm() {
             </Link>
           </p>
         </div>
+
+        <ProductSlogans />
       </div>
     </div>
   );

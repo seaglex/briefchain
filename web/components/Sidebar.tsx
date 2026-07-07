@@ -14,7 +14,7 @@ function SidebarInner() {
 
   return (
     <div className="sidebar">
-      <Link href="/briefs?role=assigned" className="brand" style={{ textDecoration: "none" }}>
+      <Link href="/landing" className="brand" style={{ textDecoration: "none" }}>
         <div className="brand-name">BriefChain</div>
       </Link>
 
