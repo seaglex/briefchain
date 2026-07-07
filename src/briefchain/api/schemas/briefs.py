@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from briefchain.models.enums import (
     BriefDownstreamState,
     BriefPriority,
+    BriefType,
     BriefUpstreamState,
     BriefVersionStatus,
 )
@@ -28,6 +29,7 @@ class BriefListItem(BaseModel):
 
     brief_id: UUID
     title: str
+    type: BriefType
     upstream_state: BriefUpstreamState
     downstream_state: BriefDownstreamState | None
     priority: BriefPriority
@@ -78,6 +80,7 @@ class BriefCreateRequest(BaseModel):
     """Request body for creating a brief."""
 
     title: str = Field(..., min_length=1, max_length=255)
+    type: BriefType = BriefType.IDEA
     content: str = Field(..., min_length=1)
     attachments: list[dict] = Field(default_factory=list)
     priority: BriefPriority = BriefPriority.P2
@@ -90,6 +93,7 @@ class BriefPatchRequest(BaseModel):
     """Request body for patching a draft brief."""
 
     title: str | None = Field(default=None, min_length=1, max_length=255)
+    type: BriefType | None = None
     content: str | None = Field(default=None, min_length=1)
     attachments: list[dict] | None = None
     priority: BriefPriority | None = None
@@ -111,6 +115,7 @@ class BriefUpdateActionRequest(BaseModel):
     version: int = Field(..., ge=1)
     content: str = Field(..., min_length=1)
     title: str | None = Field(default=None, min_length=1, max_length=255)
+    type: BriefType | None = None
     attachments: list[dict] | None = None
     priority: BriefPriority | None = None
     estimated_man_days: float | None = Field(default=None, ge=0)

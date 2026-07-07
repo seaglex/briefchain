@@ -40,6 +40,15 @@ class BriefPriority(StrEnum):
     P3 = "p3"
 
 
+class BriefType(StrEnum):
+    """Content granularity type for a brief."""
+
+    IDEA = "idea"
+    EPIC = "epic"
+    FEATURE = "feature"
+    STORY = "story"
+
+
 class FeedbackType(StrEnum):
     """Types of formal contract notifications exchanged about a brief."""
 

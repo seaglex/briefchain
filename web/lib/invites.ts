@@ -1,5 +1,6 @@
 import { apiFetch } from "./auth";
 import type { Feedback, Transfer } from "@/components/BriefDetail";
+import type { BriefType } from "@/lib/brief-types";
 
 export interface SendBriefRequest {
   is_temporary_user?: boolean;
@@ -22,6 +23,7 @@ export interface BriefDetail {
   root_id: string;
   parent_id: string | null;
   title: string;
+  type: BriefType;
   content: string;
   upstream_state: string;
   downstream_state: string | null;

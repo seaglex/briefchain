@@ -4,10 +4,12 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch, isNonEmpty } from "@/lib/auth";
 import { localDateTimeToISO } from "@/lib/date";
+import { BRIEF_TYPE_LABELS, type BriefType } from "@/lib/brief-types";
 
 export default function NewBriefForm({ parentId }: { parentId?: string }) {
   const router = useRouter();
   const [title, setTitle] = useState("");
+  const [type, setType] = useState<BriefType>("idea");
   const [content, setContent] = useState("");
   const [priority, setPriority] = useState("p2");
   const [estimatedManDays, setEstimatedManDays] = useState("");
@@ -37,6 +39,7 @@ export default function NewBriefForm({ parentId }: { parentId?: string }) {
       method: "POST",
       body: JSON.stringify({
         title: title.trim(),
+        type,
         content: content.trim(),
         priority,
         estimated_man_days: estimatedManDays ? parseFloat(estimatedManDays) : null,
@@ -75,6 +78,21 @@ export default function NewBriefForm({ parentId }: { parentId?: string }) {
             onChange={(e) => setTitle(e.target.value)}
             disabled={loading}
           />
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="type" className="form-label">类型</label>
+          <select
+            id="type"
+            value={type}
+            onChange={(e) => setType(e.target.value as BriefType)}
+            disabled={loading}
+          >
+            <option value="idea">{BRIEF_TYPE_LABELS.idea}</option>
+            <option value="epic">{BRIEF_TYPE_LABELS.epic}</option>
+            <option value="feature">{BRIEF_TYPE_LABELS.feature}</option>
+            <option value="story">{BRIEF_TYPE_LABELS.story}</option>
+          </select>
         </div>
 
         <div className="form-group">

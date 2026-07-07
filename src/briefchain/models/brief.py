@@ -25,6 +25,7 @@ from briefchain.models.enums import (
     ArbiterReviewStatus,
     BriefDownstreamState,
     BriefPriority,
+    BriefType,
     BriefUpstreamState,
     BriefVersionStatus,
 )
@@ -73,6 +74,11 @@ class Brief(Base, TimestampMixin):
     )
 
     title: Mapped[str] = mapped_column(String(255), nullable=False)
+    type: Mapped[BriefType] = mapped_column(
+        String(20),
+        nullable=False,
+        default=BriefType.IDEA,
+    )
     priority: Mapped[BriefPriority] = mapped_column(
         String(10),
         nullable=False,
@@ -162,6 +168,11 @@ class BriefVersion(Base, TimestampMixin):
     )
 
     title: Mapped[str] = mapped_column(String(255), nullable=False)
+    type: Mapped[BriefType] = mapped_column(
+        String(20),
+        nullable=False,
+        default=BriefType.IDEA,
+    )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     attachments: Mapped[list[dict]] = mapped_column(
         JSON,

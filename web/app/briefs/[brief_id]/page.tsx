@@ -3,6 +3,7 @@ import Link from "next/link";
 import { serverFetch, getCurrentUser } from "@/lib/server-auth";
 import BriefActions from "@/components/BriefActions";
 import BriefDetailView, { BriefDetail, Transfer, Feedback } from "@/components/BriefDetail";
+import { BRIEF_TYPE_LABELS } from "@/lib/brief-types";
 import AppShell from "@/components/AppShell";
 import HeaderUser from "@/components/HeaderUser";
 
@@ -57,6 +58,7 @@ export default async function BriefDetailPage({
       <div className="topbar">
         <div className="flex items-center gap-8">
           <h2>
+            {brief.type && `${BRIEF_TYPE_LABELS[brief.type]} - `}
             {isViewingDraft ? "Draft 版本" : "Brief 详情"}
             {!isViewingDraft && baseBrief.parent_id && (
               <Link
@@ -85,6 +87,7 @@ export default async function BriefDetailPage({
           actions={
             <BriefActions
               briefId={brief.brief_id}
+              type={brief.type}
               upstreamState={brief.upstream_state}
               downstreamState={brief.downstream_state}
               content={brief.content}

@@ -5,10 +5,12 @@ import { useRouter } from "next/navigation";
 import { apiFetch, isNonEmpty } from "@/lib/auth";
 import { isoToLocalDateTime, localDateTimeToISO } from "@/lib/date";
 import { sendBrief } from "@/lib/invites";
+import { BRIEF_TYPE_LABELS, type BriefType } from "@/lib/brief-types";
 import UserSelector from "@/components/UserSelector";
 
 interface BriefActionsProps {
   briefId: string;
+  type: BriefType;
   upstreamState: string;
   downstreamState: string | null;
   title: string;
@@ -26,6 +28,7 @@ interface BriefActionsProps {
 
 export default function BriefActions({
   briefId,
+  type,
   upstreamState,
   downstreamState,
   title,
@@ -47,6 +50,7 @@ export default function BriefActions({
   // Edit / update form state
   const [editMode, setEditMode] = useState<"patch" | "update">("patch");
   const [editTitle, setEditTitle] = useState(title);
+  const [editType, setEditType] = useState<BriefType>(type);
   const [editContent, setEditContent] = useState(content);
   const [editPriority, setEditPriority] = useState(priority);
   const [editEstimated, setEditEstimated] = useState(estimatedManDays?.toString() || "");
@@ -113,6 +117,7 @@ export default function BriefActions({
   const startEdit = (mode: "patch" | "update") => {
     setEditMode(mode);
     setEditTitle(title);
+    setEditType(type);
     setEditContent(content);
     setEditPriority(priority);
     setEditEstimated(estimatedManDays?.toString() || "");
@@ -129,6 +134,7 @@ export default function BriefActions({
 
     const payload: Record<string, unknown> = {
       title: editTitle.trim(),
+      type: editType,
       content: editContent.trim(),
       priority: editPriority,
       estimated_man_days: editEstimated ? parseFloat(editEstimated) : null,
@@ -343,6 +349,19 @@ export default function BriefActions({
                     onChange={(e) => setEditTitle(e.target.value)}
                     disabled={loading}
                   />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">类型</label>
+                  <select
+                    value={editType}
+                    onChange={(e) => setEditType(e.target.value as BriefType)}
+                    disabled={loading}
+                  >
+                    <option value="idea">{BRIEF_TYPE_LABELS.idea}</option>
+                    <option value="epic">{BRIEF_TYPE_LABELS.epic}</option>
+                    <option value="feature">{BRIEF_TYPE_LABELS.feature}</option>
+                    <option value="story">{BRIEF_TYPE_LABELS.story}</option>
+                  </select>
                 </div>
                 <div className="form-group">
                   <label className="form-label">内容</label>

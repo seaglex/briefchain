@@ -38,6 +38,7 @@ from briefchain.models import (
 from briefchain.models.enums import (
     ArbiterReviewStatus,
     BriefDownstreamState,
+    BriefType,
     BriefUpstreamState,
     BriefVersionStatus,
     FeedbackType,
@@ -124,6 +125,7 @@ def _sync_brief_from_version(
 ) -> None:
     """Synchronize denormalized brief fields from a final version."""
     brief.title = version.title
+    brief.type = version.type
     brief.priority = version.priority
     brief.expected_completion_at = version.expected_completion_at
     if state_changed_by is not None:
@@ -181,6 +183,7 @@ def _serialize_brief(
         version = _current_version(brief)
 
     title = brief.title
+    brief_type = brief.type
     priority = brief.priority
     expected_completion = brief.expected_completion_at
     estimated = None
@@ -193,6 +196,7 @@ def _serialize_brief(
         if brief.current_version is None:
             # Before any version is final, denormalized fields come from v1.
             title = version.title
+            brief_type = version.type
             priority = version.priority
             expected_completion = version.expected_completion_at
 
@@ -210,6 +214,7 @@ def _serialize_brief(
     base = BriefListItem(
         brief_id=brief.brief_id,
         title=title,
+        type=brief_type,
         upstream_state=brief.upstream_state,
         downstream_state=brief.downstream_state,
         priority=priority,
@@ -354,6 +359,7 @@ def create_brief(session: Session, user_id: UUID, request: BriefCreateRequest) -
         upstream_state=BriefUpstreamState.EDITING,
         downstream_state=None,
         title=request.title,
+        type=request.type,
         priority=request.priority,
         expected_completion_at=_parse_iso(request.expected_completion_at),
         created_by=user_id,
@@ -375,6 +381,7 @@ def create_brief(session: Session, user_id: UUID, request: BriefCreateRequest) -
         version=1,
         status=BriefVersionStatus.DRAFT,
         title=request.title,
+        type=request.type,
         content=request.content,
         attachments=request.attachments,
         priority=request.priority,
@@ -574,6 +581,7 @@ def patch_brief(
             version=next_version,
             status=BriefVersionStatus.DRAFT,
             title=current.title,
+            type=current.type,
             content=current.content,
             attachments=current.attachments,
             priority=current.priority,
@@ -590,6 +598,8 @@ def patch_brief(
 
     if request.title is not None:
         version.title = request.title
+    if request.type is not None:
+        version.type = request.type
     if request.content is not None:
         version.content = request.content
     if request.attachments is not None:
@@ -1047,6 +1057,8 @@ def update_brief_version(
     # Apply optional field overrides from the request onto the reviewed version.
     if request.title is not None:
         unfinalized.title = request.title
+    if request.type is not None:
+        unfinalized.type = request.type
     if request.content is not None:
         unfinalized.content = request.content
     if request.attachments is not None:

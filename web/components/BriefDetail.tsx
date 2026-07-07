@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import { BRIEF_TYPE_LABELS, type BriefType } from "@/lib/brief-types";
 import CreateTaskModal from "./CreateTaskModal";
 
 export interface UserRef {
@@ -8,11 +9,15 @@ export interface UserRef {
   name: string;
 }
 
+export type { BriefType };
+export { BRIEF_TYPE_LABELS };
+
 export interface BriefDetail {
   brief_id: string;
   root_id: string;
   parent_id: string | null;
   title: string;
+  type: BriefType;
   content: string;
   upstream_state: string;
   downstream_state: string | null;
