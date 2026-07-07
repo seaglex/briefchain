@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Fragment } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { apiFetch, isNonEmpty } from "@/lib/auth";
@@ -8,10 +8,12 @@ import { formatDateTime, isoToLocalDateTime, isOverdue, localDateTimeToISO } fro
 import type { TaskComment, TaskDetailResponse } from "@/lib/kanban";
 import UserSelector from "./UserSelector";
 import CreateTaskModal from "./CreateTaskModal";
+import HeaderUser from "./HeaderUser";
 
 interface TaskDetailProps {
   taskId: number;
   currentUserId: string;
+  userName: string;
 }
 
 function priorityClass(priority: string): string {
@@ -20,7 +22,19 @@ function priorityClass(priority: string): string {
   return "badge-p3";
 }
 
-export default function TaskDetail({ taskId, currentUserId }: TaskDetailProps) {
+function taskTypeLabel(type: string): string {
+  switch (type) {
+    case "bug":
+      return "Bug 详情";
+    case "sub_task":
+      return "Sub-task 详情";
+    case "task":
+    default:
+      return "Task 详情";
+  }
+}
+
+export default function TaskDetail({ taskId, currentUserId, userName }: TaskDetailProps) {
   const router = useRouter();
   const [data, setData] = useState<TaskDetailResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -91,7 +105,7 @@ export default function TaskDetail({ taskId, currentUserId }: TaskDetailProps) {
       setError(result.message);
       return;
     }
-    await loadDetail();
+    router.push("/kanban");
   }
 
   async function handleDelete() {
@@ -162,29 +176,50 @@ export default function TaskDetail({ taskId, currentUserId }: TaskDetailProps) {
   const canEdit = isCreator || isAssignee;
 
   return (
-    <div className="content">
-      <div className="flex items-center justify-between mb-16">
+    <Fragment>
+      <div className="topbar">
         <div className="flex items-center gap-8">
-          <h2>{task.title}
-          {task.brief_id && (
-            <Link
-              href={`/briefs/${task.brief_id}`}
-              className="badge badge-reviewed version-link"
-            >
-              关联 Brief
-            </Link>
-          )}
+          <h2>
+            {data ? taskTypeLabel(data.task.type) : "Task 详情"}
+            {data?.task.parent_task_id && (
+              <Link
+                href={`/tasks/${data.task.parent_task_id}`}
+                className="badge badge-reviewed version-link"
+              >
+                父Task
+              </Link>
+            )}
+            {data?.task.brief_id && (
+              <Link
+                href={`/briefs/${data.task.brief_id}`}
+                className="badge badge-reviewed version-link"
+              >
+                关联 Brief
+              </Link>
+            )}
           </h2>
         </div>
-        <div className="flex items-center gap-16">
-          <button
-            type="button"
-            className="btn btn-primary btn-sm"
-            onClick={() => setIsCreateSubtaskOpen(true)}
-            disabled={saving}
-          >
-            创建子任务
-          </button>
+        <div className="flex items-center gap-12">
+          <HeaderUser userName={userName} />
+        </div>
+      </div>
+
+      <div className="content">
+        <div className="flex items-center justify-between mb-16">
+        <div className="flex items-center gap-8">
+          <h2>{task.title}</h2>
+        </div>
+        <div className="flex items-center gap-8">
+          {task.type !== "sub_task" && (
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={() => setIsCreateSubtaskOpen(true)}
+              disabled={saving}
+            >
+              创建子任务
+            </button>
+          )}
           {canEdit && (
             <button type="submit" form="task-form" className="btn btn-primary btn-sm" disabled={saving}>
               {saving ? "保存中..." : "保存"}
@@ -304,6 +339,7 @@ export default function TaskDetail({ taskId, currentUserId }: TaskDetailProps) {
         }}
       />
     </div>
+  </Fragment>
   );
 }
 
@@ -342,7 +378,7 @@ function CommentItem({
           <textarea value={editingContent} onChange={(e) => setEditingContent(e.target.value)} rows={2} />
           <div className="flex gap-8 mt-8">
             <button className="btn btn-primary btn-sm" onClick={onUpdate}>保存</button>
-            <button className="btn btn-sm" onClick={onCancelEdit}>取消</button>
+            <button className="btn btn-primary btn-sm" onClick={onCancelEdit}>取消</button>
           </div>
         </div>
       ) : (

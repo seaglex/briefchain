@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { serverFetch, getCurrentUser } from "@/lib/server-auth";
 import BriefActions from "@/components/BriefActions";
 import BriefDetailView, { BriefDetail, Transfer, Feedback } from "@/components/BriefDetail";
@@ -55,7 +56,17 @@ export default async function BriefDetailPage({
     <AppShell userType={userResult.user.user_type}>
       <div className="topbar">
         <div className="flex items-center gap-8">
-          <h2>{isViewingDraft ? "Draft 版本" : "Brief 详情"}</h2>
+          <h2>
+            {isViewingDraft ? "Draft 版本" : "Brief 详情"}
+            {!isViewingDraft && baseBrief.parent_id && (
+              <Link
+                href={`/briefs/${baseBrief.parent_id}`}
+                className="badge badge-reviewed version-link"
+              >
+                父Brief
+              </Link>
+            )}
+          </h2>
         </div>
         <div className="flex items-center gap-12">
           <HeaderUser userName={userResult.user.name} />

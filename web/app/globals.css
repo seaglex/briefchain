@@ -144,6 +144,7 @@ textarea { resize: vertical; min-height: 80px; }
 .badge-reviewed.version-link { color: var(--c-primary); text-decoration-color: var(--c-primary); }
 
 /* Header user */
+.flex { display: flex; }
 .flex-1 { flex: 1; }
 .gap-4 { gap: 4px; }
 .gap-8 { gap: 8px; }
@@ -241,10 +242,17 @@ textarea { resize: vertical; min-height: 80px; }
 .kanban-card-footer { display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
 
 /* Kanban config */
+/* Kanban config */
 .kanban-config-columns { display: flex; flex-direction: column; gap: 8px; }
-.kanban-config-column { display: grid; grid-template-columns: 1fr 48px auto auto; gap: 8px; align-items: center; }
+.kanban-config-column {
+  display: grid;
+  grid-template-columns: 1fr 48px 120px 64px;
+  gap: 8px;
+  align-items: center;
+}
 .kanban-config-column-header { font-weight: 500; }
 .kanban-config-column input[type="color"] { width: 48px; padding: 2px; }
+.kanban-config-column input[type="checkbox"] { justify-self: start; }
 
 /* Comments */
 .comment-item { padding: 12px 0; border-bottom: 0.5px solid var(--c-border); }
