@@ -29,30 +29,30 @@
 
 ## 5. Editing 阶段操作
 
-- [x] 5.1 实现 patch 编辑功能：`upstream_state` 不是 `done`/`cancelled` 时显示编辑表单；对 `sent` 版本 patch 自动创建新 draft，调用 `POST /api/briefs/[id]/editing?action=patch`。
-- [x] 5.2 实现 submit-review 功能：当前版本 status=draft 时显示“提交审查”，调用 `POST /api/briefs/[id]/editing?action=submit-review`。
+- [x] 5.1 实现 patch 编辑功能：`upstream_state` 不是 `done`/`cancelled` 时显示编辑表单；调用 `POST /api/briefs/[id]/editing?action=patch` 时携带 `version`；对 `sent` 版本 patch 自动创建新 draft。
+- [x] 5.2 实现 submit-review 功能：当前版本 status=draft 时显示“提交审查”，调用 `POST /api/briefs/[id]/editing?action=submit-review` 时携带 `version`，不再收集 note。
 
 ## 6. Transfer 阶段操作
 
-- [x] 6.1 实现 send 功能：版本 status=reviewed 时显示“发送给 downstream”，弹出用户选择器并填写 note，调用 `POST /api/briefs/[id]/transfer?action=send`。
-- [x] 6.2 实现 accept 功能：`upstream_state=sent` 时显示“接受”，调用 `POST /api/briefs/[id]/transfer?action=accept`。
-- [x] 6.3 实现 reject 功能：`upstream_state=sent` 时显示“拒绝”，弹出 reason 输入框，调用 `POST /api/briefs/[id]/transfer?action=reject`。
+- [x] 6.1 实现 send 功能：版本 status=reviewed 时显示“发送给 downstream”，弹出用户选择器，不再填写 note，调用 `POST /api/briefs/[id]/transfer?action=send`。
+- [x] 6.2 实现 accept 功能：`upstream_state=sent` 时显示“接受”，直接调用 `POST /api/briefs/[id]/transfer?action=accept`，无需 reason/note。
+- [x] 6.3 实现 reject 功能：`upstream_state=sent` 时显示“拒绝”，弹出 reason 输入框并校验非空，调用 `POST /api/briefs/[id]/transfer?action=reject`。
 
 ## 7. Upstream-actions 操作
 
-- [x] 7.1 实现 cancel：`upstream_state` 非 done/cancelled 时显示，调用 `POST /api/briefs/[id]/upstream-actions?action=cancel`。
-- [x] 7.2 实现 suspend/resume：`upstream_state=sent/in_process` 可 suspend，`upstream_state=suspended` 可 resume，调用对应 `upstream-actions` 端点。
-- [x] 7.3 实现 approve：`upstream_state=in_process` + `downstream_state=submitted` 时显示，调用 `POST /api/briefs/[id]/upstream-actions?action=approve`。
-- [x] 7.4 实现 reject_submit：`downstream_state=submitted` 时显示，调用 `POST /api/briefs/[id]/upstream-actions?action=reject_submit`。
+- [x] 7.1 实现 cancel：`upstream_state` 非 done/cancelled 时显示，必须填写取消原因，调用 `POST /api/briefs/[id]/upstream-actions?action=cancel`。
+- [x] 7.2 实现 suspend/resume：`upstream_state=sent/in_process` 可 suspend，`upstream_state=suspended` 可 resume，必须填写原因，调用对应 `upstream-actions` 端点。
+- [x] 7.3 实现 approve：`upstream_state=in_process` + `downstream_state=submitted` 时显示，必须填写确认备注，调用 `POST /api/briefs/[id]/upstream-actions?action=approve`。
+- [x] 7.4 实现 reject_submit：`downstream_state=submitted` 时显示，必须填写打回原因，调用 `POST /api/briefs/[id]/upstream-actions?action=reject_submit`。
 - [x] 7.5 实现 update：`upstream_state=in_process` 时显示；`unfinalized_version` 为 null 时显示“推送更新”，不为 null 时显示“继续编辑更新”，调用 `POST /api/briefs/[id]/upstream-actions?action=update`。
 
 ## 8. Downstream-actions 操作
 
-- [x] 8.1 实现 process（进度更新）：`upstream_state=in_process` 时显示，调用 `POST /api/briefs/[id]/downstream-actions?action=process`。
-- [x] 8.2 实现 submit（提交完成）：`upstream_state=in_process` 时显示，调用 `POST /api/briefs/[id]/downstream-actions?action=submit`。
-- [x] 8.3 实现 open（重开）：`upstream_state=in_process` 且 `downstream_state=submitted/delegated/blocked` 时显示，调用 `POST /api/briefs/[id]/downstream-actions?action=open`。
-- [x] 8.4 实现 delegate：`upstream_state=in_process` 时显示，调用 `POST /api/briefs/[id]/downstream-actions?action=delegate`。
-- [x] 8.5 实现 block：`upstream_state=in_process` 时显示，调用 `POST /api/briefs/[id]/downstream-actions?action=block`。
+- [x] 8.1 实现 process（进度更新）：`upstream_state=in_process` 时显示，必须填写说明，调用 `POST /api/briefs/[id]/downstream-actions?action=process`。
+- [x] 8.2 实现 submit（提交完成）：`upstream_state=in_process` 时显示，必须填写完成说明，调用 `POST /api/briefs/[id]/downstream-actions?action=submit`。
+- [x] 8.3 实现 open（重开）：`upstream_state=in_process` 且 `downstream_state=submitted/delegated/blocked` 时显示，必须填写原因，调用 `POST /api/briefs/[id]/downstream-actions?action=open`。
+- [x] 8.4 实现 delegate：`upstream_state=in_process` 时显示，必须填写委托说明，调用 `POST /api/briefs/[id]/downstream-actions?action=delegate`。
+- [x] 8.5 实现 block：`upstream_state=in_process` 时显示，必须填写阻塞原因，调用 `POST /api/briefs/[id]/downstream-actions?action=block`。
 
 ## 9. 用户选择器与写操作代理
 

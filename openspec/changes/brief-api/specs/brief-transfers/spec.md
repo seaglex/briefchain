@@ -8,7 +8,7 @@ The system SHALL allow the creator to send a reviewed or previously-final brief 
 - **THEN** the system verifies the current version status is "reviewed" or "sent", sets `briefs.upstream_state` to "sent", sets `assigned_to` and `assigned_to_name`, updates `briefs.current_version`, `title`, `priority`, and `expected_completion_at` to the sent version, creates a `BriefTransferHistory` record with `from_user_name` and `to_user_name` snapshots, and returns the brief and transfer
 
 #### Scenario: Successful send to temporary user
-- **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/transfer?action=send` with `is_temporary_user` true and optional recipient contact info
+- **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/transfer?action=send` with `is_temporary_user` true and recipient contact info
 - **THEN** the system creates or resolves a temporary user, sets `assigned_to` and `assigned_to_name`, sets `upstream_state` to "sent", creates a transfer record with name snapshots, creates a `BriefInvite`, and returns the brief, transfer, and invite details
 
 #### Scenario: Send rejected for non-sendable version
@@ -27,7 +27,7 @@ The system SHALL allow the creator to send a reviewed or previously-final brief 
 The system SHALL allow the assigned downstream user to accept a sent brief.
 
 #### Scenario: Successful acceptance
-- **WHEN** the assigned user sends a POST request to `/api/v1/briefs/:brief_id/transfer?action=accept` with an optional note
+- **WHEN** the assigned user sends a POST request to `/api/v1/briefs/:brief_id/transfer?action=accept`
 - **THEN** the system sets `briefs.upstream_state` to "in_process" and `downstream_state` to "opened", does NOT modify `current_version` or any `BriefVersion.status`, updates `status_changed_at` / `status_changed_by`, updates the latest pending transfer record with `accepted_at`, and returns the updated brief and transfer
 
 #### Scenario: Acceptance rejected for non-assigned user

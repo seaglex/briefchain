@@ -1,6 +1,6 @@
 """Invite routes for the BriefChain API (public, token-based)."""
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Body, Query
 
 from briefchain.api.dependencies import InviteDep, SessionDep
 from briefchain.api.schemas.briefs import (
@@ -81,20 +81,9 @@ def downstream_invite_action(
     invite: InviteDep,
     session: SessionDep,
     action: str = Query(pattern="^(process|submit|open|delegate|block)$"),
-    body: DownstreamActionRequest | None = None,
+    body: DownstreamActionRequest = Body(...),
 ) -> BriefLifecycleResponse:
     """Perform a downstream action on an in-process brief using an invite token."""
-    if body is None:
-        body = DownstreamActionRequest()
-
-    if action in {"submit", "open", "block"} and not body.content:
-        action_label = {"submit": "Submit", "open": "Open", "block": "Block"}[action]
-        raise brief_service.APIError(
-            code="INVALID_REQUEST",
-            message=f"{action_label} content required",
-            status_code=422,
-        )
-
     return brief_service.downstream_action(
         session,
         invite.brief_id,

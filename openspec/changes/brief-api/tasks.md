@@ -17,8 +17,8 @@
 - [x] 3.2 Implement `list_briefs` service with role / upstream_state / downstream_state / root_id filters and cursor pagination
 - [x] 3.3 Implement `get_brief_detail` service returning requested version content, `is_current`, and `unfinalized_version`
 - [x] 3.4 Implement `list_brief_versions` service returning version status and modifier name snapshots
-- [x] 3.5 Implement `patch_brief` service modifying draft/reviewed version in place or creating a new draft version when the current version status is `final`
-- [x] 3.6 Implement `review_brief` service transitioning current draft version status to "reviewed"
+- [x] 3.5 Implement `patch_brief` service modifying draft/reviewed version in place or creating a new draft version when the current version status is `final`; require and validate `version` in the request
+- [x] 3.6 Implement `review_brief` service transitioning the requested draft version status to "reviewed"; require and validate `version` in the request
 - [x] 3.7 Implement transfer services (`send`, `accept`, `reject`) with temporary-user support and name snapshots
 - [x] 3.8 Implement upstream-action services (`cancel`, `suspend`, `resume`, `approve`, `reject_submit`, `update`) with feedback creation
 - [x] 3.9 Implement downstream-action services (`process`, `submit`, `open`, `delegate`, `block`) with feedback creation
@@ -35,31 +35,31 @@
 - [x] 5.1 Implement `POST /briefs` to create root or child brief
 - [x] 5.2 Implement `GET /briefs` with role / upstream_state / downstream_state / root_id filters and cursor pagination
 - [x] 5.3 Implement `GET /briefs/:brief_id?version=` returning the requested version content
-- [x] 5.4 Implement `POST /briefs/:brief_id/editing?action=patch` to update draft brief content
-- [x] 5.5 Implement `POST /briefs/:brief_id/editing?action=submit-review` to submit current version for review
+- [x] 5.4 Implement `POST /briefs/:brief_id/editing?action=patch` to update draft brief content; require and validate `version` in the request body
+- [x] 5.5 Implement `POST /briefs/:brief_id/editing?action=submit-review` to submit the specified draft version for review; require `version` in the request body and no longer accept `note`
 
 ## 6. Brief Transfer Routes (`/api/v1/briefs/:brief_id/transfer`)
 
-- [x] 6.1 Implement `POST /briefs/:brief_id/transfer?action=send` (reviewed or final → sent, create transfer, support temporary user, allow re-sending after rejection)
-- [x] 6.2 Implement `POST /briefs/:brief_id/transfer?action=accept` (sent → in_process, opened)
-- [x] 6.3 Implement `POST /briefs/:brief_id/transfer?action=reject` (sent → editing)
+- [x] 6.1 Implement `POST /briefs/:brief_id/transfer?action=send` (reviewed or final → sent, create transfer, support temporary user, allow re-sending after rejection; request body no longer includes `note`)
+- [x] 6.2 Implement `POST /briefs/:brief_id/transfer?action=accept` (sent → in_process, opened; no request body required)
+- [x] 6.3 Implement `POST /briefs/:brief_id/transfer?action=reject` (sent → editing; reason required)
 
 ## 7. Brief Upstream-action Routes (`/api/v1/briefs/:brief_id/upstream-actions`)
 
-- [x] 7.1 Implement `POST ...?action=cancel` (→ cancelled, preserve downstream_state)
-- [x] 7.2 Implement `POST ...?action=suspend` (→ suspended, preserve downstream_state)
-- [x] 7.3 Implement `POST ...?action=resume` (suspended → in_process)
-- [x] 7.4 Implement `POST ...?action=approve` (in_process + submitted → done)
-- [x] 7.5 Implement `POST ...?action=reject_submit` (submitted → opened)
-- [x] 7.6 Implement `POST ...?action=update` (new version final, downstream_state → opened)
+- [x] 7.1 Implement `POST ...?action=cancel` (→ cancelled, preserve downstream_state; `content` required)
+- [x] 7.2 Implement `POST ...?action=suspend` (→ suspended, preserve downstream_state; `content` required)
+- [x] 7.3 Implement `POST ...?action=resume` (suspended → in_process; `content` required)
+- [x] 7.4 Implement `POST ...?action=approve` (in_process + submitted → done; `content` required)
+- [x] 7.5 Implement `POST ...?action=reject_submit` (submitted → opened; `content` required)
+- [x] 7.6 Implement `POST ...?action=update` (new version final, downstream_state → opened; `content` required)
 
 ## 8. Brief Downstream-action Routes (`/api/v1/briefs/:brief_id/downstream-actions`)
 
-- [x] 8.1 Implement `POST ...?action=process` (progress feedback, no state change)
-- [x] 8.2 Implement `POST ...?action=submit` (→ submitted)
-- [x] 8.3 Implement `POST ...?action=open` (→ opened)
-- [x] 8.4 Implement `POST ...?action=delegate` (→ delegated)
-- [x] 8.5 Implement `POST ...?action=block` (→ blocked)
+- [x] 8.1 Implement `POST ...?action=process` (progress feedback, no state change; `content` required)
+- [x] 8.2 Implement `POST ...?action=submit` (→ submitted; `content` required)
+- [x] 8.3 Implement `POST ...?action=open` (→ opened; `content` required)
+- [x] 8.4 Implement `POST ...?action=delegate` (→ delegated; `content` required)
+- [x] 8.5 Implement `POST ...?action=block` (→ blocked; `content` required)
 
 ## 9. Brief Versions Routes
 

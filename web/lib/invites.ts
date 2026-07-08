@@ -8,7 +8,6 @@ export interface SendBriefRequest {
   recipient_name?: string;
   recipient_email?: string;
   recipient_phone?: string;
-  note?: string;
 }
 
 export interface SendBriefResponse {
@@ -102,11 +101,11 @@ export interface OpenInviteRequest {
 }
 
 export interface DelegateInviteRequest {
-  content?: string;
+  content: string;
 }
 
 export interface ProcessInviteRequest {
-  content?: string;
+  content: string;
 }
 
 export async function getInvite(token: string) {
@@ -127,10 +126,10 @@ export async function rejectInvite(token: string, body: RejectInviteRequest) {
   });
 }
 
-export async function processInvite(token: string, body?: ProcessInviteRequest) {
+export async function processInvite(token: string, body: ProcessInviteRequest) {
   return apiFetch<{ brief: BriefDetail; feedback: Feedback }>(`/api/invites/${token}/downstream-actions?action=process`, {
     method: "POST",
-    body: JSON.stringify(body ?? {}),
+    body: JSON.stringify(body),
   });
 }
 
@@ -148,10 +147,10 @@ export async function openInvite(token: string, body: OpenInviteRequest) {
   });
 }
 
-export async function delegateInvite(token: string, body?: DelegateInviteRequest) {
+export async function delegateInvite(token: string, body: DelegateInviteRequest) {
   return apiFetch<{ brief: BriefDetail }>(`/api/invites/${token}/downstream-actions?action=delegate`, {
     method: "POST",
-    body: JSON.stringify(body ?? {}),
+    body: JSON.stringify(body),
   });
 }
 

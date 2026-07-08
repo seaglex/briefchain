@@ -44,11 +44,11 @@
 - **理由**：Client Component 无法读取 httpOnly Cookie，因此 POST 写操作需要 Next.js API Route 代理到后端。
 - **做法**：创建以下 API Route（统一使用与后端一致的 `action` 查询参数）：
   - `POST /api/briefs` → 后端 `POST /api/v1/briefs`
-  - `POST /api/briefs/[id]/editing?action=patch` → 后端 `POST /api/v1/briefs/:id/editing?action=patch`
-  - `POST /api/briefs/[id]/editing?action=submit-review` → 后端 `POST /api/v1/briefs/:id/editing?action=submit-review`
-  - `POST /api/briefs/[id]/transfer?action=send` → 后端 `POST /api/v1/briefs/:id/transfer?action=send`
-  - `POST /api/briefs/[id]/transfer?action=accept` → 后端 `POST /api/v1/briefs/:id/transfer?action=accept`
-  - `POST /api/briefs/[id]/transfer?action=reject` → 后端 `POST /api/v1/briefs/:id/transfer?action=reject`
+  - `POST /api/briefs/[id]/editing?action=patch` → 后端 `POST /api/v1/briefs/:id/editing?action=patch`（请求体必须携带 `version`）
+  - `POST /api/briefs/[id]/editing?action=submit-review` → 后端 `POST /api/v1/briefs/:id/editing?action=submit-review`（请求体必须携带 `version`，不再收集 note）
+  - `POST /api/briefs/[id]/transfer?action=send` → 后端 `POST /api/v1/briefs/:id/transfer?action=send`（不再附带 note）
+  - `POST /api/briefs/[id]/transfer?action=accept` → 后端 `POST /api/v1/briefs/:id/transfer?action=accept`（无需 reason/note）
+  - `POST /api/briefs/[id]/transfer?action=reject` → 后端 `POST /api/v1/briefs/:id/transfer?action=reject`（必须填写 reason）
   - `POST /api/briefs/[id]/upstream-actions?action=cancel|suspend|resume|approve|reject_submit|update` → 后端对应端点
   - `POST /api/briefs/[id]/downstream-actions?action=process|submit|open|delegate|block` → 后端对应端点
   - `GET /api/briefs/[id]/versions` → 后端 `GET /api/v1/briefs/:id/versions`
@@ -101,4 +101,4 @@
 
 - 列表页是否需要显示分页？后端使用 cursor 分页，MVP 可先展示第一页，后续再加分页 UI。
 - 详情页的版本内容切换是否需要支持？原型有计划，MVP 可先展示当前版本，隐藏版本选择器或仅展示只读版本号。
-- 发送 Brief 时是否需要附带 note？后端 `SendBriefRequest` 支持 `note`，MVP 可选填写。
+- 发送 Brief 时是否需要附带 note？已决定：不需要；发送弹窗不再收集 note，`accept` 也不需要 note。

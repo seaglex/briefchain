@@ -117,6 +117,67 @@ def _max_version(brief: Brief) -> int:
     return max((v.version for v in brief.versions), default=0)
 
 
+def _resolve_editable_version(
+    brief: Brief,
+    version_number: int,
+) -> BriefVersion | None:
+    """Return the version to edit for a patch request.
+
+    If the requested version exists, it must be the latest unfinalized version
+    (draft or reviewed). If it does not exist, it must be the next version
+    number after the max existing version and no unfinalized version may exist;
+    in that case the caller must create a new draft from the current version.
+
+    Returns the existing version, or ``None`` when a new draft should be
+    created.
+    """
+    existing = next(
+        (v for v in brief.versions if v.version == version_number),
+        None,
+    )
+    if existing is not None:
+        latest_unfinalized = _latest_unfinalized_version(brief)
+        if latest_unfinalized is None:
+            raise APIError(
+                code="VERSION_NOT_EDITABLE",
+                message="The requested version is no longer editable",
+                status_code=409,
+            )
+        if existing.version != latest_unfinalized.version:
+            raise APIError(
+                code="VERSION_CONFLICT",
+                message="A newer editable version exists",
+                status_code=409,
+            )
+        if existing.status not in {
+            BriefVersionStatus.DRAFT,
+            BriefVersionStatus.REVIEWED,
+        }:
+            raise APIError(
+                code="INVALID_STATUS",
+                message="Only draft or reviewed versions can be edited",
+                status_code=409,
+            )
+        return existing
+
+    max_version = _max_version(brief)
+    if version_number != max_version + 1:
+        raise APIError(
+            code="VERSION_NOT_FOUND",
+            message="The requested version does not belong to this brief",
+            status_code=404,
+        )
+
+    if _latest_unfinalized_version(brief) is not None:
+        raise APIError(
+            code="VERSION_CONFLICT",
+            message="An editable version already exists",
+            status_code=409,
+        )
+
+    return None
+
+
 def _sync_brief_from_version(
     session: Session,
     brief: Brief,
@@ -551,15 +612,17 @@ def patch_brief(
 ) -> BriefDetail:
     """Update an editable draft/reviewed version or create a new draft from a final version.
 
-    This operation only touches version state; it does not modify the brief's
-    upstream/downstream state or synchronize denormalized brief fields.
+    The caller must supply the version it intends to edit. If that version
+    exists, it must be the latest unfinalized version. If it does not exist, it
+    must be the next sequential version and no unfinalized version may exist;
+    in that case a new draft is forked from the current final version.
     """
     brief = _load_brief_with_versions(session, brief_id)
     _require_creator(brief, user_id)
     user = _load_user(session, user_id)
 
     now = _now()
-    version = _latest_unfinalized_version(brief)
+    version = _resolve_editable_version(brief, request.version)
     if version is None:
         # All existing versions are final; fork a new draft from the current final version.
         current = _current_version(brief)
@@ -569,16 +632,9 @@ def patch_brief(
                 message="No editable version found",
                 status_code=404,
             )
-        next_version = current.version + 1
-        if any(v.version == next_version for v in brief.versions):
-            raise APIError(
-                code="DRAFT_ALREADY_EXISTS",
-                message="A draft version already exists for this brief",
-                status_code=409,
-            )
         version = BriefVersion(
             brief_id=brief.brief_id,
-            version=next_version,
+            version=request.version,
             status=BriefVersionStatus.DRAFT,
             title=current.title,
             type=current.type,
@@ -634,14 +690,32 @@ def review_brief(
     session: Session,
     brief_id: UUID,
     user_id: UUID,
-    request: BriefReviewRequest | None = None,
+    request: BriefReviewRequest,
 ) -> BriefDetail:
-    """Submit the current draft version for review."""
+    """Submit the requested draft version for review."""
     brief = _load_brief_with_versions(session, brief_id)
     _require_creator(brief, user_id)
 
-    version = _latest_unfinalized_version(brief)
-    if version is None or version.status != BriefVersionStatus.DRAFT:
+    version = next(
+        (v for v in brief.versions if v.version == request.version),
+        None,
+    )
+    if version is None:
+        raise APIError(
+            code="VERSION_NOT_FOUND",
+            message="The requested version does not belong to this brief",
+            status_code=404,
+        )
+
+    latest_unfinalized = _latest_unfinalized_version(brief)
+    if latest_unfinalized is None or version.version != latest_unfinalized.version:
+        raise APIError(
+            code="VERSION_CONFLICT",
+            message="A newer editable version exists",
+            status_code=409,
+        )
+
+    if version.status != BriefVersionStatus.DRAFT:
         raise APIError(
             code="INVALID_STATUS",
             message="Only a draft version can be submitted for review",
@@ -885,7 +959,6 @@ def accept_brief(
     session: Session,
     brief_id: UUID,
     user_id: UUID,
-    note: str | None = None,
 ) -> BriefLifecycleResponse:
     """Accept a sent brief."""
     brief = _load_brief_with_versions(session, brief_id)
@@ -1183,7 +1256,7 @@ def downstream_action(
     brief_id: UUID,
     user_id: UUID,
     action: str,
-    content: str | None,
+    content: str,
     attachments: list[dict] | None,
 ) -> BriefLifecycleResponse:
     """Perform a downstream state-changing action on a brief."""
@@ -1210,7 +1283,7 @@ def downstream_action(
         user_id,
         brief.created_by,
         config["feedback_type"],
-        content or "",
+        content,
         attachments or [] if config["supports_attachments"] else [],
         is_to_down=False,
     )

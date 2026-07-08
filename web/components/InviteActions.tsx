@@ -108,8 +108,12 @@ export default function InviteActions({ token, brief, onActionComplete }: Invite
   };
 
   const handleDelegate = () => {
+    if (!actionReason.trim()) {
+      setActionError("请填写委托说明");
+      return;
+    }
     handleAction(
-      () => delegateInvite(token, { content: actionReason.trim() || undefined }),
+      () => delegateInvite(token, { content: actionReason.trim() }),
       () => {
         reset();
         onActionComplete();
@@ -118,8 +122,12 @@ export default function InviteActions({ token, brief, onActionComplete }: Invite
   };
 
   const handleSync = () => {
+    if (!actionReason.trim()) {
+      setActionError("请填写同步说明");
+      return;
+    }
     handleAction(
-      () => processInvite(token, { content: actionReason.trim() || undefined }),
+      () => processInvite(token, { content: actionReason.trim() }),
       () => {
         reset();
         onActionComplete();
@@ -149,14 +157,14 @@ export default function InviteActions({ token, brief, onActionComplete }: Invite
   const renderModal = () => {
     if (!actionMode) return null;
 
-    const isRequired = actionMode !== "delegate" && actionMode !== "sync";
+    const isRequired = true;
     const labelMap: Record<Exclude<typeof actionMode, null>, string> = {
       reject: "拒绝原因",
       submit: "完成说明",
       open: "待处理说明",
-      delegate: "委托说明（可选）",
+      delegate: "委托说明",
       block: "阻塞原因",
-      sync: "同步说明（可选）",
+      sync: "同步说明",
     };
 
     const confirmMap: Record<Exclude<typeof actionMode, null>, { label: string; variant: string; handler: () => void }> = {

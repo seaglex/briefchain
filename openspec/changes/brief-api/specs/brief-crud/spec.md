@@ -57,16 +57,16 @@ The system SHALL return the detail of a single brief, showing the requested vers
 The system SHALL allow the creator to patch a brief version whenever the brief is not in a terminal `upstream_state` (`done` or `cancelled`).
 
 #### Scenario: Successful patch before any version is finalized
-- **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/editing?action=patch` with updated title, content, priority, or expected_completion_at
+- **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/editing?action=patch` with the current editable `version` and updated title, content, priority, or expected_completion_at
 - **THEN** the system updates the existing draft version in place, does NOT synchronize `briefs.title` / `priority` / `expected_completion_at` (only `send` or `update` updates those denormalized fields), and returns the updated brief with the patched version number and `unfinalized_version` set to that version number
 
 #### Scenario: Successful patch after a version was finalized and rejected
-- **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/editing?action=patch` and the current version status is `final` (e.g., after the brief was rejected back to `editing`)
-- **THEN** the system creates a new draft version with the next version number, leaves `current_version` pointing to the old final version, leaves `briefs.title` / `priority` unchanged, and returns the updated brief with `unfinalized_version` set to the new draft version number
+- **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/editing?action=patch` with `version` equal to the next sequential version number and the current version status is `final` (e.g., after the brief was rejected back to `editing`)
+- **THEN** the system creates a new draft version with the requested version number, leaves `current_version` pointing to the old final version, leaves `briefs.title` / `priority` unchanged, and returns the updated brief with `unfinalized_version` set to the new draft version number
 
-#### Scenario: Patch on final version rejected when draft already exists
-- **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/editing?action=patch` and a higher draft version already exists
-- **THEN** the system returns a 409 error with code `DRAFT_ALREADY_EXISTS`
+#### Scenario: Patch rejected when version does not match latest editable version
+- **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/editing?action=patch` with a `version` that is not the latest unfinalized version and is not the next sequential version number
+- **THEN** the system returns a 409 error with code `VERSION_CONFLICT` or `VERSION_NOT_FOUND`
 
 #### Scenario: Patch rejected for terminal upstream state
 - **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/editing?action=patch` when `upstream_state` is `done` or `cancelled`
@@ -77,16 +77,16 @@ The system SHALL allow the creator to patch a brief version whenever the brief i
 - **THEN** the system returns a 403 error
 
 ### Requirement: Submit brief version for review
-The system SHALL allow the creator to submit the current draft version for review via `action=submit-review`, transitioning the version status to "reviewed" and leaving `briefs.upstream_state` unchanged.
+The system SHALL allow the creator to submit a draft version for review via `action=submit-review`, transitioning the version status to "reviewed" and leaving `briefs.upstream_state` unchanged.
 
 #### Scenario: Successful review submission
-- **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/editing?action=submit-review` with an optional note
-- **THEN** the system updates the current draft `BriefVersion.status` to "reviewed", records the effective `arbiter_review_id` on the version, leaves `briefs.upstream_state` unchanged (patch/submit-review only operate on version, not brief state), and returns the brief with the reviewed version
+- **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/editing?action=submit-review` with the draft `version` number
+- **THEN** the system updates the requested draft `BriefVersion.status` to "reviewed", records the effective `arbiter_review_id` on the version, leaves `briefs.upstream_state` unchanged (patch/submit-review only operate on version, not brief state), and returns the brief with the reviewed version
 
 #### Scenario: Review submission rejected for non-creator
 - **WHEN** a non-creator sends a POST request to `/api/v1/briefs/:brief_id/editing?action=submit-review`
 - **THEN** the system returns a 403 error
 
-#### Scenario: Review submission rejected when current version is not draft
-- **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/editing?action=submit-review` when the current version status is not "draft"
-- **THEN** the system returns a 409 error
+#### Scenario: Review submission rejected when requested version is not draft
+- **WHEN** the creator sends a POST request to `/api/v1/briefs/:brief_id/editing?action=submit-review` with a `version` that does not exist, is not the latest unfinalized version, or whose status is not "draft"
+- **THEN** the system returns a 409 error (or 404 if the version does not exist)

@@ -51,7 +51,9 @@ export default async function BriefDetailPage({
   const isCreator = baseBrief.created_by_id === currentUserId;
   const isAssignee = baseBrief.assigned_to_id === currentUserId;
   const isViewingDraft = viewingVersion !== null && viewingVersion === baseBrief.unfinalized_version;
-  const updateVersion = isViewingDraft ? brief.version : baseBrief.unfinalized_version;
+  const updateVersion = isViewingDraft
+    ? brief.version
+    : (baseBrief.unfinalized_version ?? (baseBrief.current_version ? baseBrief.current_version + 1 : undefined));
 
   return (
     <AppShell userType={userResult.user.user_type}>

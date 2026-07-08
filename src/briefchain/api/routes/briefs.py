@@ -3,7 +3,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Body, Depends, Query, status
 
 from briefchain.api.dependencies import CurrentUserIdDep, SessionDep, get_current_user_id
 from briefchain.api.schemas.briefs import (
@@ -78,12 +78,16 @@ def editing_action(
     user_id: CurrentUserIdDep,
     brief_id: UUID,
     action: Annotated[str, Query(pattern="^(patch|submit-review)$")],
-    request: BriefPatchRequest | BriefReviewRequest | None = None,
+    request: BriefReviewRequest | BriefPatchRequest | None = None,
 ) -> BriefDetail:
     """Perform an editing-phase action on a brief."""
     if action == "submit-review":
-        if request is None:
-            request = BriefReviewRequest()
+        if request is None or not isinstance(request, BriefReviewRequest):
+            raise brief_service.APIError(
+                code="INVALID_REQUEST",
+                message="Review request body required",
+                status_code=422,
+            )
         return brief_service.review_brief(session, brief_id, user_id, request)
 
     if request is None or not isinstance(request, BriefPatchRequest):
@@ -166,20 +170,9 @@ def downstream_action(
         str,
         Query(pattern="^(process|submit|open|delegate|block)$"),
     ],
-    request: DownstreamActionRequest | None = None,
+    request: DownstreamActionRequest = Body(...),
 ) -> BriefLifecycleResponse:
     """Perform a downstream action on a brief."""
-    if request is None:
-        request = DownstreamActionRequest()
-
-    if action in {"submit", "open", "block"} and not request.content:
-        action_label = {"submit": "Submit", "open": "Open", "block": "Block"}[action]
-        raise brief_service.APIError(
-            code="INVALID_REQUEST",
-            message=f"{action_label} content required",
-            status_code=422,
-        )
-
     return brief_service.downstream_action(
         session,
         brief_id,

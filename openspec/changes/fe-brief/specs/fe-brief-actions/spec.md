@@ -5,7 +5,7 @@ The system SHALL allow the brief creator to patch a brief when `upstream_state` 
 
 #### Scenario: Successful patch
 - **WHEN** the creator modifies title, content, priority, expected completion time, or estimated man days and saves
-- **THEN** the system calls `POST /api/v1/briefs/[brief_id]/editing?action=patch`, refreshes the detail page, and shows the updated content
+- **THEN** the system calls `POST /api/v1/briefs/[brief_id]/editing?action=patch` with the current editable `version`, refreshes the detail page, and shows the updated content
 
 #### Scenario: Patch disabled for terminal upstream state
 - **WHEN** the creator views a brief whose `upstream_state` is `done` or `cancelled`
@@ -13,14 +13,14 @@ The system SHALL allow the brief creator to patch a brief when `upstream_state` 
 
 #### Scenario: Patch on final version creates new draft
 - **WHEN** the creator views a brief whose current version status is `final` and clicks edit
-- **THEN** the system calls `POST /api/v1/briefs/[brief_id]/editing?action=patch` and, on success, the detail page reloads with a new `unfinalized_version`
+- **THEN** the system calls `POST /api/v1/briefs/[brief_id]/editing?action=patch` with `version` equal to the next sequential version number, and on success the detail page reloads with a new `unfinalized_version`
 
 ### Requirement: Upstream can submit the current draft version for review
 The system SHALL allow the brief creator to submit the current draft version for review via `action=submit-review`.
 
 #### Scenario: Successful review submission
 - **WHEN** the creator clicks "提交审查"
-- **THEN** the system calls `POST /api/v1/briefs/[brief_id]/editing?action=submit-review`, refreshes the page, and shows the current version status as "reviewed"
+- **THEN** the system calls `POST /api/v1/briefs/[brief_id]/editing?action=submit-review` with the current draft `version`, refreshes the page, and shows the current version status as "reviewed"
 
 #### Scenario: Review disabled when current version is not draft
 - **WHEN** the creator views a brief whose current version status is not "draft"
@@ -31,7 +31,7 @@ The system SHALL allow the brief creator to send a reviewed brief to another use
 
 #### Scenario: Send to registered user
 - **WHEN** the creator clicks "发送给 downstream" and selects a user from the user selector
-- **THEN** the system calls `POST /api/v1/briefs/[brief_id]/transfer?action=send` with `is_temporary_user` false, `assigned_to`, and an optional note, and transitions the brief `upstream_state` to "sent"
+- **THEN** the system calls `POST /api/v1/briefs/[brief_id]/transfer?action=send` with `is_temporary_user` false and `assigned_to`, and transitions the brief `upstream_state` to "sent"
 
 #### Scenario: Send to temporary user
 - **WHEN** the creator chooses "Temporary user", enters recipient information, and submits
@@ -46,7 +46,7 @@ The system SHALL allow the brief assignee to accept or reject a sent brief.
 
 #### Scenario: Accept brief
 - **WHEN** the assignee clicks "接受"
-- **THEN** the system calls `POST /api/v1/briefs/[brief_id]/transfer?action=accept` with an optional note, refreshes the page, and shows `upstream_state` as "in_process" and `downstream_state` as "opened"
+- **THEN** the system calls `POST /api/v1/briefs/[brief_id]/transfer?action=accept`, refreshes the page, and shows `upstream_state` as "in_process" and `downstream_state` as "opened"
 
 #### Scenario: Reject with reason
 - **WHEN** the assignee clicks "拒绝" and enters a rejection reason
@@ -103,8 +103,12 @@ The system SHALL allow the brief creator to send an existing reviewed unfinalize
 The system SHALL allow the brief assignee to submit a progress update without changing the brief state.
 
 #### Scenario: Successful progress feedback
-- **WHEN** the assignee clicks "进度更新" and enters optional content and attachments
+- **WHEN** the assignee clicks "进度更新" and enters content and attachments
 - **THEN** the system calls `POST /api/v1/briefs/[brief_id]/downstream-actions?action=process`, refreshes the page, and shows the new progress feedback in the feedback list
+
+#### Scenario: Progress feedback without content blocked
+- **WHEN** the assignee tries to submit a progress update without entering content
+- **THEN** the system displays a validation error and does not submit
 
 ### Requirement: Downstream can submit completion
 The system SHALL allow the brief assignee to submit completion of an in-process brief.
@@ -124,8 +128,12 @@ The system SHALL allow the brief assignee to reopen a brief from submitted, dele
 The system SHALL allow the brief assignee to mark a brief as delegated.
 
 #### Scenario: Successful delegation
-- **WHEN** the assignee clicks "委派" and optionally enters delegation notes
+- **WHEN** the assignee clicks "委派" and enters delegation notes
 - **THEN** the system calls `POST /api/v1/briefs/[brief_id]/downstream-actions?action=delegate` with the notes, refreshes the page, and shows `downstream_state` as "delegated"
+
+#### Scenario: Delegate without notes blocked
+- **WHEN** the assignee tries to submit a delegation without entering notes
+- **THEN** the system displays a validation error and does not submit
 
 ### Requirement: Downstream can block a brief
 The system SHALL allow the brief assignee to mark a brief as blocked.

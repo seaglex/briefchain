@@ -55,7 +55,7 @@ def test_patch_brief_modifies_unfinalized_version(
     response = client.post(
         f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=patch",
         headers=auth_headers_creator,
-        json={"title": "Updated Title"},
+        json={"version": 1, "title": "Updated Title"},
     )
 
     assert response.status_code == 200
@@ -74,6 +74,7 @@ def test_review_brief(
     response = client.post(
         f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=submit-review",
         headers=auth_headers_creator,
+        json={"version": 1},
     )
 
     assert response.status_code == 200
@@ -97,6 +98,7 @@ def test_send_brief(
     client.post(
         f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=submit-review",
         headers=auth_headers_creator,
+        json={"version": 1},
     )
     response = client.post(
         f"/api/v1/briefs/{draft_brief.brief_id}/transfer?action=send",
@@ -124,6 +126,7 @@ def test_resend_brief_after_rejection(
     client.post(
         f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=submit-review",
         headers=auth_headers_creator,
+        json={"version": 1},
     )
     client.post(
         f"/api/v1/briefs/{draft_brief.brief_id}/transfer?action=send",
@@ -166,6 +169,7 @@ def test_accept_brief(
     client.post(
         f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=submit-review",
         headers=auth_headers_creator,
+        json={"version": 1},
     )
     client.post(
         f"/api/v1/briefs/{draft_brief.brief_id}/transfer?action=send",
@@ -255,3 +259,39 @@ def test_get_chain_detail(
     assert data["chain_id"] == str(draft_brief.brief_id)
     assert "tree" in data
     assert "owner_id" in data
+
+
+def test_patch_brief_rejects_unknown_version(
+    client: TestClient,
+    auth_headers_creator: dict[str, str],
+    draft_brief: Brief,
+) -> None:
+    """Patching a non-existent version returns an error."""
+    response = client.post(
+        f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=patch",
+        headers=auth_headers_creator,
+        json={"version": 99, "title": "Updated Title"},
+    )
+
+    assert response.status_code == 404
+
+
+def test_review_brief_rejects_stale_version(
+    client: TestClient,
+    auth_headers_creator: dict[str, str],
+    draft_brief: Brief,
+) -> None:
+    """Submitting a non-draft version for review returns an error."""
+    client.post(
+        f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=submit-review",
+        headers=auth_headers_creator,
+        json={"version": 1},
+    )
+
+    response = client.post(
+        f"/api/v1/briefs/{draft_brief.brief_id}/editing?action=submit-review",
+        headers=auth_headers_creator,
+        json={"version": 1},
+    )
+
+    assert response.status_code == 409

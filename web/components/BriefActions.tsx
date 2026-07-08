@@ -68,7 +68,6 @@ export default function BriefActions({
     | "cancel"
     | "suspend"
     | "resume"
-    | "review"
     | "approve"
     | "reject_submit"
     | "process"
@@ -78,7 +77,6 @@ export default function BriefActions({
     | "block"
   >(null);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
-  const [note, setNote] = useState("");
   const [reason, setReason] = useState("");
 
   // Send mode state
@@ -144,13 +142,11 @@ export default function BriefActions({
       revision_reason: editReason.trim() || (editMode === "patch" ? "更新内容" : "版本更新"),
     };
 
-    if (editMode === "update") {
-      if (updateVersion === undefined) {
-        setError("缺少更新版本号");
-        return;
-      }
-      payload.version = updateVersion;
+    if (updateVersion === undefined) {
+      setError("缺少编辑版本号");
+      return;
     }
+    payload.version = updateVersion;
 
     const path =
       editMode === "patch"
@@ -171,13 +167,26 @@ export default function BriefActions({
     }
 
     setModal(null);
-    router.refresh();
+    router.push(`/briefs/${briefId}?version=${updateVersion}`);
   };
 
   const handleReview = async () => {
-    await handleAction(`/api/briefs/${briefId}/editing?action=submit-review`, { note: note.trim() || undefined });
-    setModal(null);
-    setNote("");
+    if (updateVersion === undefined) {
+      setError("缺少提交审查的版本号");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    const result = await apiFetch(`/api/briefs/${briefId}/editing?action=submit-review`, {
+      method: "POST",
+      body: JSON.stringify({ version: updateVersion }),
+    });
+    setLoading(false);
+    if (!result.ok) {
+      setError(result.message);
+      return;
+    }
+    router.refresh();
   };
 
   const handleSend = async () => {
@@ -188,7 +197,6 @@ export default function BriefActions({
       }
       await handleAction(`/api/briefs/${briefId}/transfer?action=send`, {
         assigned_to: selectedUserId,
-        note: note.trim() || undefined,
       });
       resetSendModal();
       setModal(null);
@@ -209,7 +217,6 @@ export default function BriefActions({
       recipient_name: recipientName.trim(),
       recipient_email: isEmail ? trimmedContact : undefined,
       recipient_phone: isEmail ? undefined : trimmedContact || undefined,
-      note: note.trim() || undefined,
     });
     setLoading(false);
 
@@ -249,13 +256,13 @@ export default function BriefActions({
     setReason("");
   };
 
-  const handleDownstreamAction = async (action: string, requireReason: boolean) => {
-    if (requireReason && !isNonEmpty(reason)) {
+  const handleDownstreamAction = async (action: string) => {
+    if (!isNonEmpty(reason)) {
       setError("请填写说明");
       return;
     }
     await handleAction(`/api/briefs/${briefId}/downstream-actions?action=${action}`, {
-      content: reason.trim() || undefined,
+      content: reason.trim(),
       attachments: [],
     });
     setModal(null);
@@ -266,7 +273,6 @@ export default function BriefActions({
     setModal(null);
     setError(null);
     setSelectedUserId(null);
-    setNote("");
     setReason("");
     resetSendModal();
   };
@@ -283,7 +289,20 @@ export default function BriefActions({
     if (!inviteResult) return;
     const url = `${window.location.origin}${inviteResult.invite_url}`;
     try {
-      await navigator.clipboard.writeText(url);
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = url;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(textarea);
+        if (!ok) throw new Error("execCommand copy failed");
+      }
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -297,8 +316,6 @@ export default function BriefActions({
         return "发送给 downstream";
       case "edit":
         return editMode === "patch" ? "编辑 Brief" : "更新版本";
-      case "review":
-        return "提交审查";
       case "reject":
         return "拒绝 Brief";
       case "cancel":
@@ -472,16 +489,6 @@ export default function BriefActions({
                     </div>
                   </>
                 )}
-
-                <div className="form-group">
-                  <label className="form-label">备注（可选）</label>
-                  <textarea
-                    value={note}
-                    onChange={(e) => setNote(e.target.value)}
-                    rows={3}
-                    placeholder="可选填写备注"
-                  />
-                </div>
               </>
             )}
 
@@ -509,20 +516,7 @@ export default function BriefActions({
               </div>
             )}
 
-            {modal === "process" && (
-              <div className="form-group">
-                <label className="form-label">进度说明（可选）</label>
-                <textarea
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  rows={5}
-                  placeholder="填写最新进度..."
-                />
-              </div>
-            )}
-
             {[
-              "review",
               "reject",
               "cancel",
               "suspend",
@@ -533,14 +527,13 @@ export default function BriefActions({
               "open",
               "delegate",
               "block",
+              "process",
             ].includes(modal) && (
               <div className="form-group">
                 <label className="form-label">
-                  {modal === "review"
-                    ? "审查备注"
-                    : modal === "reject"
-                      ? "拒绝原因"
-                      : modal === "cancel"
+                  {modal === "reject"
+                    ? "拒绝原因"
+                    : modal === "cancel"
                       ? "取消原因"
                       : modal === "suspend"
                         ? "暂停原因"
@@ -556,8 +549,10 @@ export default function BriefActions({
                                   ? "重新打开原因"
                                   : modal === "delegate"
                                     ? "委托说明"
-                                    : "阻塞原因"}
-                  {modal !== "delegate" && modal !== "approve" && modal !== "review" && " *"}
+                                    : modal === "block"
+                                      ? "阻塞原因"
+                                      : "进度说明"}
+                  {" *"}
                 </label>
                 <textarea
                   value={reason}
@@ -579,13 +574,12 @@ export default function BriefActions({
                 onClick={() => {
                   if (modal === "edit") return handleEditSave();
                   if (modal === "send") return handleSend();
-                  if (modal === "review") return handleReview();
                   if (modal === "reject") return handleReject();
-                  if (modal === "process") return handleDownstreamAction("process", false);
-                  if (modal === "submit") return handleDownstreamAction("submit", true);
-                  if (modal === "open") return handleDownstreamAction("open", true);
-                  if (modal === "delegate") return handleDownstreamAction("delegate", false);
-                  if (modal === "block") return handleDownstreamAction("block", true);
+                  if (modal === "process") return handleDownstreamAction("process");
+                  if (modal === "submit") return handleDownstreamAction("submit");
+                  if (modal === "open") return handleDownstreamAction("open");
+                  if (modal === "delegate") return handleDownstreamAction("delegate");
+                  if (modal === "block") return handleDownstreamAction("block");
                   return handleUpstreamReasonAction(modal);
                 }}
                 disabled={loading}
@@ -626,7 +620,7 @@ export default function BriefActions({
           </button>
           <button
             className="btn btn-sm btn-primary"
-            onClick={() => setModal("review")}
+            onClick={handleReview}
             disabled={loading}
           >
             审核
@@ -668,15 +662,26 @@ export default function BriefActions({
           </button>
           <button
             className="btn btn-sm btn-primary"
-            onClick={() => {
+            onClick={async () => {
               if (updateVersion === undefined) {
                 setError("缺少更新版本号");
                 return;
               }
-              handleAction(`/api/briefs/${briefId}/upstream-actions?action=update`, {
-                version: updateVersion,
-                content: "发送更新",
+              setLoading(true);
+              setError(null);
+              const result = await apiFetch(`/api/briefs/${briefId}/upstream-actions?action=update`, {
+                method: "POST",
+                body: JSON.stringify({
+                  version: updateVersion,
+                  content: content,
+                }),
               });
+              setLoading(false);
+              if (!result.ok) {
+                setError(result.message);
+                return;
+              }
+              router.push(`/briefs/${briefId}?version=${updateVersion}`);
             }}
             disabled={loading}
           >
@@ -881,7 +886,7 @@ export default function BriefActions({
           </button>
           <button
             className="btn btn-sm btn-primary"
-            onClick={() => setModal("review")}
+            onClick={handleReview}
             disabled={loading}
           >
             审核

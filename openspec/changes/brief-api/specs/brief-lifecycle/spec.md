@@ -91,8 +91,12 @@ The system SHALL allow the creator to send an existing reviewed unfinalized vers
 The system SHALL allow the assigned downstream user to submit a progress update without changing the brief state.
 
 #### Scenario: Successful progress feedback
-- **WHEN** the assigned user sends a POST request to `/api/v1/briefs/:brief_id/downstream-actions?action=process` with optional `content` and attachments
+- **WHEN** the assigned user sends a POST request to `/api/v1/briefs/:brief_id/downstream-actions?action=process` with required `content` and optional attachments
 - **THEN** the system leaves `upstream_state` and `downstream_state` unchanged, does NOT modify `current_version` or any `BriefVersion.status`, and creates a feedback record with `type` "progress" and `is_to_down` false
+
+#### Scenario: Process rejected without content
+- **WHEN** the assigned user sends a POST request to `/api/v1/briefs/:brief_id/downstream-actions?action=process` without `content`
+- **THEN** the system returns a 422 error
 
 #### Scenario: Process rejected for non-assigned user
 - **WHEN** a user other than `assigned_to` sends a POST request to `/api/v1/briefs/:brief_id/downstream-actions?action=process`
@@ -128,8 +132,12 @@ The system SHALL allow the assigned downstream user to reopen a brief from submi
 The system SHALL allow the assigned downstream user to mark a brief as delegated.
 
 #### Scenario: Successful delegation
-- **WHEN** the assigned user sends a POST request to `/api/v1/briefs/:brief_id/downstream-actions?action=delegate` with optional `content`
+- **WHEN** the assigned user sends a POST request to `/api/v1/briefs/:brief_id/downstream-actions?action=delegate` with required `content`
 - **THEN** the system sets `downstream_state` to "delegated", does NOT modify `current_version` or any `BriefVersion.status`, updates `status_changed_at` / `status_changed_by`, and creates a feedback record with `type` "delegate" and `is_to_down` false
+
+#### Scenario: Delegate rejected without content
+- **WHEN** the assigned user sends a POST request to `/api/v1/briefs/:brief_id/downstream-actions?action=delegate` without `content`
+- **THEN** the system returns a 422 error
 
 #### Scenario: Delegate rejected for invitation-phase or pre-contact brief
 - **WHEN** the assigned user sends a POST request to `/api/v1/briefs/:brief_id/downstream-actions?action=delegate` when `upstream_state` is "editing" or "sent"

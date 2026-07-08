@@ -47,18 +47,18 @@ User API (`/auth`、`/users`) 已经实现，SQLAlchemy 模型（`Brief`、`Brie
   - 创建者（`created_by`）拥有 upstream 操作权限（editing、transfer send、upstream-actions）。
   - 被分配者（`assigned_to`）可接受/拒绝 transfer 和执行 downstream-actions。
   - 其他已认证用户只读（列表/详情/版本/历史/反馈/chain）。
-- **版本管理**：
+- **版本管理**：[实际实现中版本号校验]
   - 创建 brief 时同步创建 `BriefVersion` v1，状态为 "draft"；`briefs.current_version` 初始为 null。
-  - `PATCH /briefs/:id/editing?action=patch`：只操作 version.status。`draft`/`reviewed` 原地修改；`final` 不能修改，自动创建 v(n+1) draft（若已存在则报错）。patch 不同步 `briefs.title` / `priority` / `expected_completion_at`。
-  - `POST /briefs/:id/editing?action=submit-review`：当前 draft 版本 → "reviewed"；不碰 brief state。
-  - `POST /briefs/:id/transfer?action=send`：当前 reviewed 或 sent 版本 → "sent"，并同步 `briefs.current_version` / `title` / `priority` / `expected_completion_at`（邀约阶段桥梁，拒绝后可重新分配）。
+  - `PATCH /briefs/:id/editing?action=patch`：请求体必须携带 `version`。若该版本存在，则必须是当前最新未终结版本（draft 或 reviewed）；若该版本不存在，则必须是 `max_version + 1` 且当前没有未终结版本，此时从当前最终版本 fork 出新 draft。patch 不同步 `briefs.title` / `priority` / `expected_completion_at`。
+  - `POST /briefs/:id/editing?action=submit-review`：请求体必须携带 `version`，且该版本必须存在、是当前最新未终结版本、并且状态为 "draft"；将其转为 "reviewed"，不碰 brief state。
+  - `POST /briefs/:id/transfer?action=send`：当前 reviewed 或 final 版本 → "sent"，并同步 `briefs.current_version` / `title` / `priority` / `expected_completion_at`（邀约阶段桥梁，拒绝后可重新分配）。发送请求体不再包含 `note`。
   - `POST /briefs/:id/upstream-actions?action=update`：合约期桥梁，对 version 的操作与 send 相同，但记录在 feedbacks 并强制 `downstream_state=opened`。
   - 详情接口通过 `?version=` 参数返回指定版本内容，默认返回 `current_version` 内容；同时返回 `unfinalized_version` 字段标识可编辑 draft（null 表示无）。
 - **状态流转**：
-  - editing 阶段：patch（只改 version 内容/状态）、submit-review（版本 draft → reviewed，不改 brief state）。
-  - transfer 阶段：send（editing/sent → sent，version→final，同步 current_version 等）、accept（sent → in_process, opened）、reject（sent → editing）。
-  - upstream-actions（除 update 外只改 brief state）：cancel（→ cancelled，保留 downstream_state）、suspend（→ suspended，保留 downstream_state）、resume（→ in_process）、approve（→ done，保留 downstream_state）、reject_submit（downstream_state → opened）、update（新版本 sent，downstream_state → opened）。
-  - downstream-actions（只改 brief state）：process（progress feedback，无状态变化）、submit（→ submitted）、open（→ opened）、delegate（→ delegated）、block（→ blocked）。
+  - editing 阶段：patch（必须带 `version`，改 version 内容/状态）、submit-review（必须带 `version`，版本 draft → reviewed，不改 brief state）。
+  - transfer 阶段：send（editing/sent → sent，version→final，同步 current_version 等；请求体不再含 `note`）、accept（sent → in_process, opened；无需 reason/note）、reject（sent → editing；必须传 reason）。
+  - upstream-actions（除 update 外只改 brief state；所有 action 的 `content` 必填）：cancel（→ cancelled，保留 downstream_state）、suspend（→ suspended，保留 downstream_state）、resume（→ in_process）、approve（→ done，保留 downstream_state）、reject_submit（downstream_state → opened）、update（新版本 sent，downstream_state → opened）。
+  - downstream-actions（所有 action 的 `content` 必填）：process（progress feedback，无状态变化）、submit（→ submitted）、open（→ opened）、delegate（→ delegated）、block（→ blocked）。
 - **响应模式**：
   - 列表模式：`brief_id`, `title`, `upstream_state`, `downstream_state`, `priority`, `created_by_id`, `created_by_name`, `assigned_to_id`, `assigned_to_name`, `status_changed_by_id`, `status_changed_by_name`, `status_changed_at`, `updated_at`。
   - 详情模式：列表模式 + `root_id`, `parent_id`, `content`, `attachments`, `current_version`, `version`, `is_current`, `unfinalized_version`, `estimated_man_days`, `expected_completion_at`, `created_at`。

@@ -1,6 +1,6 @@
 # BriefChain 设计文档（总入口）
 
-> 最后更新：2026-06-28（v5：send/update 分离）
+> 最后更新：2026-07-08（v6：异步 Arbiter 审核）
 
 ## 文档结构
 
@@ -154,6 +154,12 @@ BriefVersion 状态 代表编辑状态
     - brief upstream_state 不能是 editing 或 sent，其他几乎没有约束
 
 send 是邀约阶段桥梁，update 是合约阶段桥梁，同时与 brief state 和 brief version status 相关
+
+和前端交互总结
+- editing_action，需要校验 version，直接处理 brief，不需要额外 content
+- transfer_action，只有 reject 需要 reason，其他直接执行
+- upstream_action，都需要 content，解释变更原因
+- downstream_action，都需要 content，解释进度变化
 
 按 API 聚类分组：
 

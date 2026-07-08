@@ -92,6 +92,9 @@ class BriefCreateRequest(BaseModel):
 class BriefPatchRequest(BaseModel):
     """Request body for patching a draft brief."""
 
+    model_config = ConfigDict(extra="forbid")
+
+    version: int = Field(..., ge=1)
     title: str | None = Field(default=None, min_length=1, max_length=255)
     type: BriefType | None = None
     content: str | None = Field(default=None, min_length=1)
@@ -104,9 +107,16 @@ class BriefPatchRequest(BaseModel):
 
 
 class BriefReviewRequest(BaseModel):
-    """Request body for submitting a draft version for review."""
+    """Request body for submitting a draft version for review.
 
-    note: str | None = Field(default=None)
+    The review action does not collect a note; it only requires the version
+    being submitted so the server can verify the client is not acting on stale
+    state.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: int = Field(..., ge=1)
 
 
 class BriefUpdateActionRequest(BaseModel):
@@ -155,7 +165,6 @@ class SendBriefRequest(BaseModel):
     recipient_email: str | None = Field(default=None, examples=["lisi@example.com"])
     recipient_phone: str | None = Field(default=None, examples=["+8613800000000"])
     recipient_name: str | None = Field(default=None, max_length=255)
-    note: str | None = None
     accept_deadline_days: int = Field(default=7, ge=1)
     complete_deadline_days: int = Field(default=30, ge=1)
 
@@ -166,12 +175,6 @@ class SendBriefRequest(BaseModel):
         if self.assigned_to is None:
             raise ValueError("assigned_to is required when is_temporary_user is false")
         return self
-
-
-class AcceptTransferRequest(BaseModel):
-    """Request body for accepting a sent brief."""
-
-    note: str | None = Field(default=None)
 
 
 class RejectTransferRequest(BaseModel):
@@ -187,9 +190,13 @@ class UpstreamActionRequest(BaseModel):
 
 
 class DownstreamActionRequest(BaseModel):
-    """Request body for downstream-actions."""
+    """Request body for downstream-actions.
 
-    content: str | None = Field(default=None)
+    Every downstream action is a notification to the creator and must include a
+    non-empty explanation.
+    """
+
+    content: str = Field(..., min_length=1)
     attachments: list[dict] | None = Field(default=None)
 
 
