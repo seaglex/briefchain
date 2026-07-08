@@ -6,6 +6,7 @@
  */
 
 import { cookies } from "next/headers";
+import { NextRequest } from "next/server";
 import { API_BASE_URL, parseBackendError, SESSION_COOKIE_NAME } from "./auth";
 
 /** Read the session token from the httpOnly cookie. Only usable server-side. */
@@ -141,4 +142,24 @@ export async function proxyWithoutToken(
     status: response.status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+/** Determine whether the incoming request is served over HTTPS. */
+export function isSecureRequest(request: NextRequest): boolean {
+  const forwardedProto = request.headers.get("x-forwarded-proto");
+  if (forwardedProto) {
+    return forwardedProto === "https";
+  }
+  return request.nextUrl.protocol === "https:";
+}
+
+/** Cookie options for the httpOnly session cookie, matching the request protocol. */
+export function getSessionCookieOptions(request: NextRequest) {
+  return {
+    httpOnly: true,
+    secure: isSecureRequest(request),
+    sameSite: "lax" as const,
+    path: "/",
+    maxAge: 60 * 60 * 24 * 7, // 7 days
+  };
 }

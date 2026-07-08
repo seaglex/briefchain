@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { API_BASE_URL, SESSION_COOKIE_NAME, parseBackendError } from "@/lib/auth";
+import { getSessionCookieOptions } from "@/lib/server-auth";
 
 export async function POST(request: NextRequest) {
   const body = (await request.json()) as {
@@ -65,13 +66,7 @@ export async function POST(request: NextRequest) {
   const data = (await backendResponse.json()) as { token: string; user: unknown };
 
   const response = NextResponse.json({ user: data.user });
-  response.cookies.set(SESSION_COOKIE_NAME, data.token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 7, // 7 days
-  });
+  response.cookies.set(SESSION_COOKIE_NAME, data.token, getSessionCookieOptions(request));
 
   return response;
 }

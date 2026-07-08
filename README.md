@@ -128,6 +128,12 @@ Kanban & Task (Task / sub-tasks / bug)
 - **npm** `>=10`（推荐 `11.5.1+`）
 - **PostgreSQL** 或 SQLite（默认使用 SQLite，零配置启动）
 
+参考.env.example 和 web/.env.example 设置环境变量
+```commandline
+cp .env.example .env
+cp web/.env.example web/.env
+```
+
 ### 1. 安装后端依赖并同步虚拟环境
 
 ```bash
@@ -154,7 +160,7 @@ uv run alembic upgrade head
 
 ```bash
 # 开发模式（带热重载）
-uv run uvicorn briefchain.api.main:app --reload --host 0.0.0.0 --port 8000
+uv run uvicorn briefchain.api.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 API 默认地址：`http://localhost:8000`  
@@ -171,8 +177,11 @@ npm install
 ### 5. 启动 Next.js 前端
 
 ```bash
-# 开发模式（带热重载）
+# 开发模式（带热重载），如果不是本机使用，需要把服务器 IP 加入 web/.env 中 ALLOWED_DEV_ORIGINS 
 npm run dev
+
+# 产品模式
+npm run build & npm run start
 ```
 
 前端默认地址：`http://localhost:3000`

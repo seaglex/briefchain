@@ -195,19 +195,6 @@ export default function BriefDetailView({
 
               <MarkdownRenderer content={brief.content} />
 
-              {brief.estimated_man_days !== null && (
-                <>
-                  <h3 className="mb-12 mt-16">预估人天</h3>
-                  <p>{brief.estimated_man_days}</p>
-                </>
-              )}
-
-              {brief.expected_completion_at && (
-                <>
-                  <h3 className="mb-12 mt-16">预期完成时间</h3>
-                  <p>{formatDate(brief.expected_completion_at)}</p>
-                </>
-              )}
             </div>
           </div>
 
