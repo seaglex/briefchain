@@ -46,6 +46,7 @@ def db_session() -> Generator[Session]:
 @pytest.fixture
 def client(db_session: Session) -> Generator[TestClient]:
     """Create a FastAPI test client with an overridden database session."""
+    settings.arbiter_worker_spawn = False
 
     def _get_test_db() -> Generator[Session]:
         yield db_session

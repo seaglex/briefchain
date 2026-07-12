@@ -3,7 +3,8 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, Query, status
+from fastapi import APIRouter, Body, Depends, Query, Response, status
+from fastapi.responses import JSONResponse
 
 from briefchain.api.dependencies import CurrentUserIdDep, SessionDep, get_current_user_id
 from briefchain.api.schemas.briefs import (
@@ -79,7 +80,7 @@ def editing_action(
     brief_id: UUID,
     action: Annotated[str, Query(pattern="^(patch|submit-review)$")],
     request: BriefReviewRequest | BriefPatchRequest | None = None,
-) -> BriefDetail:
+) -> Response:
     """Perform an editing-phase action on a brief."""
     if action == "submit-review":
         if request is None or not isinstance(request, BriefReviewRequest):
@@ -88,7 +89,17 @@ def editing_action(
                 message="Review request body required",
                 status_code=422,
             )
-        return brief_service.review_brief(session, brief_id, user_id, request)
+        result = brief_service.review_brief(session, brief_id, user_id, request)
+        return JSONResponse(
+            status_code=status.HTTP_202_ACCEPTED,
+            content={
+                "review_id": str(result.review_id),
+                "brief_id": str(result.brief_id),
+                "brief_version": result.brief_version,
+                "status": result.status.value,
+                "created_at": result.created_at.isoformat(),
+            },
+        )
 
     if request is None or not isinstance(request, BriefPatchRequest):
         raise brief_service.APIError(
@@ -97,6 +108,7 @@ def editing_action(
             status_code=422,
         )
     return brief_service.patch_brief(session, brief_id, user_id, request)
+
 
 
 @router.post("/{brief_id}/transfer", response_model=BriefLifecycleResponse)
@@ -161,6 +173,9 @@ def upstream_action(
     )
 
 
+_downstream_action_body = Body(...)
+
+
 @router.post("/{brief_id}/downstream-actions", response_model=BriefLifecycleResponse)
 def downstream_action(
     session: SessionDep,
@@ -170,7 +185,7 @@ def downstream_action(
         str,
         Query(pattern="^(process|submit|open|delegate|block)$"),
     ],
-    request: DownstreamActionRequest = Body(...),
+    request: DownstreamActionRequest = _downstream_action_body,
 ) -> BriefLifecycleResponse:
     """Perform a downstream action on a brief."""
     return brief_service.downstream_action(

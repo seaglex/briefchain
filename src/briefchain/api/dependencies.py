@@ -6,28 +6,20 @@ from uuid import UUID
 
 from fastapi import Depends, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
-from briefchain.api.config import settings
 from briefchain.api.exceptions import APIError
 from briefchain.api.security import decode_access_token
 from briefchain.api.services import invites as invite_service
+from briefchain.database import SessionLocal
 from briefchain.models import BriefInvite, User
 
 _oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
-_engine = create_engine(
-    settings.database_url,
-    connect_args={"check_same_thread": False} if settings.database_url.startswith("sqlite") else {},
-    echo=False,
-)
-_SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
-
 
 def get_db_session() -> Generator[Session]:
     """Yield a SQLAlchemy database session."""
-    session = _SessionLocal()
+    session = SessionLocal()
     try:
         yield session
     finally:

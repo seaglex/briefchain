@@ -5,7 +5,7 @@
 - **Web Framework:** `fastapi`
 - **ORM Framework:** `SQLAlchemy`
 - **Version Control:** `git`
-- **LLM Framework:** `langchain/langgraph 1.0+`
+- **LLM Framework:** `google adk`
 
 # Coding Guidelines
 
@@ -34,7 +34,7 @@
 ## 4. ORM Design
 - **Prevent unintentional queries:** set lazy="raise" in relationship.
 - **DO NOT use num / string to represent state:** always convert data in db to enum
-- **Store 
+- **Use UTC datetime in db:** convert to local time when use
 
 ## 5. Agent Specific Guidelines
 

@@ -77,7 +77,7 @@ editing ──(send)──→ sent ──(send)──→ sent    // 替换邀约
 | 操作 | 作用域 | 说明                                          |
 |------|--------|---------------------------------------------|
 | patch | 只改 version.status 和内容 | 不碰 upstream_state / downstream_state        |
-| submit-review | 只改 version.status | draft → reviewed，不碰 brief 状态                |
+| submit-review | 只改 version.status | 触发异步审核；通过后 version 从 draft → reviewed，不碰 brief 状态 |
 | send | 桥梁：version → final + brief 状态变更 | 唯一同时操作两边的动作，version必须是reviewed状态（或者是final状态） |
 | accept / reject / cancel / suspend / resume / approve / reject_submit | 只改 brief 状态 | 不碰 version                                  |
 | process / submit / open / delegate / block | 只改 brief 状态 | 不碰 version                                  |

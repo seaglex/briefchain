@@ -71,7 +71,9 @@ class FeedbackType(StrEnum):
 class ArbiterReviewStatus(StrEnum):
     """Possible outcomes of an Arbiter review."""
 
+    PROCESSING = "processing"
     PASSED = "passed"
+    REJECTED = "rejected"
     FAILED = "failed"
     FORCE_SKIPPED = "force_skipped"
 

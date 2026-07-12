@@ -1,6 +1,6 @@
 # BriefChain 设计文档（总入口）
 
-> 最后更新：2026-07-08（v6：异步 Arbiter 审核）
+> 最后更新：2026-07-12（v9：子进程 worker、skill_name 简化、webhook 入业务表、API 精简）
 
 ## 文档结构
 
@@ -12,6 +12,9 @@
 | [05-invite-link-design.md](05-invite-link-design.md) | 邀请链接设计 |
 | [06-task-kanban-design.md](06-task-kanban-design.md) | Task / Kanban 子系统（数据模型、看板配置、泳道） |
 | [07-task-kanban-api-design.md](07-task-kanban-api-design.md) | Task / Kanban REST API 设计（端点定义） |
+| [10-arbiter-queue-design.md](10-arbiter-queue-design.md) | 通用异步任务队列（enqueue/dequeue 极简接口、DB/Redis 实现、webhook_url 入业务表） |
+| [11-arbiter-worker-design.md](11-arbiter-worker-design.md) | 后台 Worker（子进程模式、skill_name 简化、worker 内部决定 skill、重试、健康回收） |
+| [12-arbiter-review-api-design.md](12-arbiter-review-api-design.md) | 异步审核 API（触发 + 查询、webhook 回调、与 send 流程集成、MVP 仅 2 端点） |
 
 ## 产品定位
 
@@ -119,7 +122,7 @@ BriefVersion 状态 代表编辑状态
 |  status  |     含义     |
 |:--------:|:----------:|
 |  draft   |   草稿，不可发   |
-| reviewed | AI 审核过，可以发 |
+| reviewed | 审核通过，可以发 |
 |  final   |  不可变更，可以发  |
 
 
@@ -166,7 +169,7 @@ send 是邀约阶段桥梁，update 是合约阶段桥梁，同时与 brief stat
 | 分组 | 动作 | 操作方 | 操作对象 | 变更                                    |
 |------|------|--------|---------|---------------------------------------|
 | **编辑** | patch | upstream | version only | 修改版本内容（final→新建 draft，非 final→原地改）    |
-| | submit-review | upstream | version only | 版本 draft→reviewed                     |
+| | submit-review | upstream | version only | 触发异步审核；通过后 version 变为 reviewed |
 | **Transfer** | send | upstream | version + brief | 两种场景：首次发送 / 替换邀约（记录在 transfer_history） |
 | | accept | downstream | brief only | (sent, null) → (in_process, opened)   |
 | | reject | downstream | brief only | (sent, null) → (editing, null)        |

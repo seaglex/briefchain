@@ -1,428 +1,305 @@
 # Arbiter 后台 Worker 设计
 
-> 最后更新：2026-07-08
+> 最后更新：2026-07-12
 
 ## 1. 设计目标
 
-单线程后台进程，从任务队列消费任务并执行 LLM 审核。核心要求：
+后台独立子进程，由 FastAPI 主进程拉起，从通用任务队列消费任务并执行。核心职责全部在 worker 层：
 
-- **Skill 驱动**——审核能力以「Skill」为单元组织，每个 Skill 有独立版本
+- **子进程模式**——FastAPI 启动时通过 `subprocess.Popen` 拉起，共享代码库和配置，零运维成本
+- **按 type 分发**——worker 从 `task_queue` 取任务（dequeue 即删除），按 `type` 分发到对应处理器
+- **Skill 驱动**——审核能力以 Skill 为单元组织，采用 Claude Code / OpenClaw 通用模式（prompt 模板 + 模型配置 + 输出结构）。MVP 仅一个 skill：`brief-review`
+- **后端决定 skill**——worker 根据任务 type 选择对应 skill，前后端无需指定
+- **重试管理**——`max_retries` 是 worker 配置，重试次数和状态在 `brief_arbiter_reviews.attempt_count` 中追踪
+- **健康回收**——worker 启动时和周期性扫描卡在 `processing` 的 review，重新入队
 - **最小依赖**——不依赖 Celery 等外部调度框架
-- **优雅退出**——收到 SIGTERM 后完成当前任务再退出
-- **容错**——单个 Skill 失败不影响同任务的其他 Skill，worker 本身崩溃可由系统进程管理器恢复
 
 ## 2. Skill 设计
 
 ### 2.1 Skill 定义
 
-Skill 是 LLM 驱动的审核能力单元，包含：
+Skill 是 LLM 驱动的审核能力单元。MVP 只有一个 skill，由 worker 内部决定调用。
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `skill_id` | `str` | 唯一标识，如 `"completeness-review"` |
-| `version` | `str` | 语义化版本，如 `"v1"`, `"v1.1"` |
-| `name` | `str` | 人类可读名称，如 `"需求完备性审查"` |
-| `description` | `str` | 说明该 skill 审查什么维度的质量 |
-| `system_prompt` | `str` | LLM 系统提示词 |
-| `model` | `str` | 使用的模型，如 `"gpt-4o"`, `"claude-3.5-sonnet"` |
-| `temperature` | `float` | 温度参数 |
-| `output_schema` | `type[BaseModel]` | Pydantic 模型，定义结构化输出格式 |
-| `dependencies` | `list[str]` | 依赖的其他 skill_id（可选，用于串联执行） |
+| 属性 | 说明 |
+|------|------|
+| `skill_name` | 唯一标识，如 `brief-review` |
+| `version` | 语义化版本，如 `v1`、`v2` |
+| `system_prompt` | LLM 系统提示词 |
+| `model` | 使用的模型（如 `gpt-4o`、`claude-3.5-sonnet`） |
+| `temperature` | 温度参数 |
+| `output_schema` | 结构化输出格式（Pydantic BaseModel） |
 
-### 2.2 Skill 版本管理
+### 2.2 版本管理
 
-版本管理不依赖数据库表，直接通过文件系统组织：
+采用 Claude Code / OpenClaw 通用模式：Skill 以文件形式组织，版本通过目录结构管理，不需要数据库表。
 
 ```
-src/briefchain/arbiter/skills/
-├── __init__.py
-├── registry.py                   # SkillRegistry：加载/发现 skills
-├── completeness/
-│   ├── __init__.py
-│   ├── v1.py                     # completeness_review_v1
-│   └── v2.py                     # completeness_review_v2
-├── ambiguity/
-│   └── v1.py                     # ambiguity_review_v1
-└── acceptance_criteria/
-    └── v1.py                     # acceptance_criteria_review_v1
+src/briefchain/skills/
+├── brief-review/
+│   ├── skill.md
 ```
 
-每个 skill 版本是一个 Python 模块，导出 `SkillDescriptor`：
+每个 Skill 版本文件包含：system prompt、model 配置、temperature、输出结构定义。
 
-```python
-# src/briefchain/arbiter/skills/completeness/v2.py
-from pydantic import BaseModel, Field
+### 2.3 Skill 选择
 
-from src.briefchain.arbiter.skill_protocol import SkillDescriptor
+- Worker 内部根据 `type` 硬编码选择 skill。MVP 中 `type=review` → `brief-review@latest`
+- Skill 信息不存储在队列或 review 记录中——worker 启动时加载，运行中使用
+- 前端和 API 无需关心用哪个 skill——这是 worker 的内部实现细节
 
+## 3. Worker 主循环
 
-class CompletenessOutput(BaseModel):
-    thinking: str = Field(description="逐步推理过程")
-    is_complete: bool = Field(description="需求是否完备")
-    completeness_score: int = Field(ge=0, le=100)
-    missing_dimensions: list[str] = Field(default_factory=list)
-    suggestions: list[str] = Field(default_factory=list)
-
-
-skill = SkillDescriptor(
-    skill_id="completeness-review",
-    version="v2",
-    name="需求完备性审查",
-    description="审查 brief 是否覆盖了背景、目标、范围、验收标准、非功能需求",
-    system_prompt="""你是一个需求完备性审查专家。请审查以下需求文档，判断是否覆盖了关键维度：
-1. 背景与动机
-2. 目标与范围
-3. 验收标准
-4. 非功能需求（性能、安全、兼容性）
-5. 风险与假设
-对每个缺失的维度给出具体建议。""",
-    model="gpt-4o",
-    temperature=0.3,
-    output_schema=CompletenessOutput,
-    dependencies=[],  # 该 skill 不依赖其他 skill 的结果
-)
-```
-
-### 2.3 SkillRegistry
-
-```python
-# src/briefchain/arbiter/skills/registry.py
-from dataclasses import dataclass
-from typing import Iterable
-from src.briefchain.arbiter.skill_protocol import SkillDescriptor
-
-
-@dataclass(frozen=True)
-class SkillSelector:
-    """skill_id + version 的唯一选择器。"""
-    skill_id: str
-    version: str
-
-    @classmethod
-    def from_string(cls, s: str) -> "SkillSelector":
-        """从 "completeness-review@v2" 格式解析。"""
-        skill_id, _, version = s.partition("@")
-        if not version:
-            raise ValueError(f"Skill selector must include version: {s}")
-        return cls(skill_id=skill_id, version=version)
-
-
-class SkillRegistry:
-    """管理所有已注册的 Skill 版本。
-
-    在模块加载时通过 `load_all()` 自动发现 `skills/` 目录下的所有 skill。
-    """
-
-    def __init__(self):
-        self._skills: dict[SkillSelector, SkillDescriptor] = {}
-
-    def register(self, descriptor: SkillDescriptor) -> None:
-        key = SkillSelector(skill_id=descriptor.skill_id, version=descriptor.version)
-        self._skills[key] = descriptor
-
-    def resolve(self, selector: SkillSelector) -> SkillDescriptor:
-        """按 skill_id@version 解析。不存在则抛 KeyError。"""
-        return self._skills[selector]
-
-    def list_all(self) -> Iterable[SkillDescriptor]:
-        return self._skills.values()
-
-    def latest_version(self, skill_id: str) -> str:
-        """返回指定 skill 的最新版本。"""
-        candidates = [
-            (s.version, s)
-            for s in self._skills.values()
-            if s.skill_id == skill_id
-        ]
-        if not candidates:
-            raise KeyError(f"Skill not found: {skill_id}")
-        # 语义化排序取最新
-        candidates.sort(key=lambda x: _parse_version(x[0]), reverse=True)
-        return candidates[0][0]
-```
-
-## 3. Worker 设计
-
-### 3.1 架构概览
+### 3.1 概览
 
 ```
-                    ┌────────────────────────┐
-                    │     ArbiterWorker       │
-                    │                         │
-  QueueService ────▶│  1. dequeue             │
-                    │  2. resolve skill(s)    │
-                    │  3. call LLM (per skill)│
-                    │  4. aggregate results   │
-                    │  5. update review       │──▶ brief_arbiter_reviews
-                    │  6. mark task done      │
-                    │                         │
-                    │  [after commit]         │
-                    │  7. fire webhook        │──▶ frontend
-                    └────────────────────────┘
+                               ┌──────────────────────────────────┐
+                               │           ArbiterWorker           │
+                               │                                   │
+                               │  ┌─ ① 健康回收                     │
+                               │  │   扫描卡住的 review             │
+                               │  │   → 重新 enqueue               │
+                               │  │                                 │
+  TaskQueue ──────────────────▶│  ├─ ② dequeue                     │
+                               │  │   取最早任务（DELETE 后返回）    │
+                               │  │                                 │
+                               │  ├─ ③ 幂等检查                     │
+                               │  │   review 已终态 → skip          │
+                               │  │                                 │
+                               │  ├─ ④ 重试上限检查                 │
+                               │  │   attempt_count ≥ max_retries   │
+                               │  │   → mark failed + webhook       │
+                               │  │                                 │
+                               │  ├─ ⑤ 按 type 分发 handler         │
+                               │  │   type=review → ReviewHandler   │
+                               │  │   (skill 由 handler 内部决定)    │
+                               │  │                                 │
+                               │  └─ ⑥ 执行成功 / 失败处理          │
+                               │      成功 → update review + webhook │
+                               │      失败 → re-enqueue 或 mark fail │
+                               └──────────────────────────────────┘
 ```
 
-### 3.2 Worker 循环
+### 3.2 主循环（伪代码）
 
-```python
-# src/briefchain/arbiter/worker.py
-import signal
-import time
-from dataclasses import dataclass
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable
+```
+health_check_interval = 60          // 每 60 秒做一次健康检查
 
-from src.briefchain.arbiter.skill_protocol import SkillDescriptor, SkillResult
-from src.briefchain.arbiter.skills.registry import SkillRegistry, SkillSelector
-from src.briefchain.queue.base import AbstractQueueService, QueueTask
+worker.run():
+    running = true
+    注册信号处理（SIGTERM / SIGINT → running = false）
 
+    last_health_check = 0
 
-@dataclass
-class WorkerConfig:
-    poll_interval_seconds: float = 2.0
-    visibility_timeout_seconds: int = 300
-    lock_refresh_interval_seconds: int = 60     # 长任务定期刷新锁
-    webhook_callback: Callable[[UUID, str], None] | None = None
+    while running:
 
+        // ① 周期性健康回收：扫描卡住的 review
+        if elapsed_since(last_health_check) >= health_check_interval:
+            health_recovery()
+            last_health_check = now()
 
-class ArbiterWorker:
-    """单线程后台 worker，消费队列并执行 LLM 审核。
+        // ② 取任务（阻塞或短超时轮询）
+        task = queue.dequeue()
+        if task is null:
+            sleep(poll_interval)
+            continue
 
-    Usage:
-        worker = ArbiterWorker(queue_service, skill_registry, config)
-        worker.run()
-    """
+        // ③ 加载业务对象
+        review = load brief_arbiter_reviews by task.ref_id
 
-    def __init__(
-        self,
-        queue_service: AbstractQueueService,
-        skill_registry: SkillRegistry,
-        config: WorkerConfig | None = None,
-    ):
-        self._queue = queue_service
-        self._registry = skill_registry
-        self._config = config or WorkerConfig()
-        self._running = False
+        // ④ 幂等：已完成则跳过
+        if review.status in (passed, rejected, failed):
+            continue
 
-        signal.signal(signal.SIGTERM, self._handle_signal)
-        signal.signal(signal.SIGINT, self._handle_signal)
+        // ⑤ 重试上限
+        if review.attempt_count >= max_retries:
+            review.status = failed
+            review.error = "max retries exceeded"
+            review.save()
+            notify_webhook(review.webhook_url, review.id, status=failed)
+            continue
 
-    def _handle_signal(self, signum, frame) -> None:
-        self._running = False
+        // ⑥ 递增尝试次数
+        review.attempt_count += 1
+        review.last_attempt_at = now()
+        review.save()
 
-    def run(self) -> None:
-        self._running = True
-        while self._running:
-            task = self._queue.dequeue(
-                visibility_timeout_seconds=self._config.visibility_timeout_seconds
-            )
-            if task is None:
-                time.sleep(self._config.poll_interval_seconds)
-                continue
+        // ⑦ 分发执行
+        handler = resolve_handler(task.type)
 
-            try:
-                self._process_one(task)
-            except Exception:
-                # _process_one 内部已有错误处理，此处兜底
-                pass
-        print("Worker shut down gracefully.")
-
-    def _process_one(self, task: QueueTask) -> None:
-        """处理单个队列任务。"""
         try:
-            # 1. 解析并执行 skills
-            results = self._execute_skills(task)
+            handler.execute(review)
+            // handler 内部已完成业务表更新（passed / rejected）
+            notify_webhook(review.webhook_url, review.id, status=review.status)
 
-            # 2. 聚合结果写入 brief_arbiter_reviews
-            self._update_review(task.review_id, results)
-
-            # 3. 标记任务完成（事务内）
-            self._queue.mark_done(task.id)
-
-            # 4. 事务提交后：webhook 通知
-            self._queue.execute_callbacks(task, TaskStatus.DONE)
+        except TransientError as e:
+            // 瞬时失败（LLM 超时、限流等）→ 重新入队
+            review.error = str(e)
+            review.save()
+            queue.enqueue(type=task.type, ref_id=task.ref_id)
 
         except Exception as e:
-            # 记录失败原因，自动重试逻辑由 queue.mark_failed 处理
-            self._queue.mark_failed(task.id, error=str(e))
-            self._queue.execute_callbacks(task, TaskStatus.FAILED)
+            // 非瞬时失败 → 记录并重试
+            review.error = str(e)
+            review.save()
+            queue.enqueue(type=task.type, ref_id=task.ref_id)
 
-    def _execute_skills(self, task: QueueTask) -> dict[str, "SkillResult"]:
-        """执行任务要求的全部 skills。每个 skill 独立运行，失败不影响其他。"""
-        results: dict[str, SkillResult] = {}
-
-        for selector_str in task.skill_ids:
-            selector = SkillSelector.from_string(selector_str)
-            descriptor = self._registry.resolve(selector)
-
-            try:
-                result = self._run_skill(descriptor, task.brief_id)
-                results[selector_str] = result
-            except Exception as e:
-                results[selector_str] = SkillResult(
-                    skill_id=selector_str,
-                    status="error",
-                    error=str(e),
-                )
-
-        return results
+    log("Worker shut down gracefully.")
 ```
 
-### 3.3 Skill 执行
+### 3.3 健康回收
 
-```python
-    def _run_skill(self, descriptor: SkillDescriptor, brief_id: UUID) -> SkillResult:
-        """执行单个 skill：加载 brief → 构造 prompt → 调 LLM → 解析输出。"""
-        # 加载 brief 内容
-        brief_content = _load_brief_for_review(brief_id)
+扫描长时间卡在 `processing` 的 review 记录，重新入队：
 
-        # 使用 langchain/langgraph 调用 LLM
-        from langchain_openai import ChatOpenAI
+```
+health_recovery():
+    stuck_reviews = find all brief_arbiter_reviews
+      WHERE status = processing
+        AND last_attempt_at < now() - processing_timeout
 
-        llm = ChatOpenAI(
-            model=descriptor.model,
-            temperature=descriptor.temperature,
-        ).bind_tools(
-            response_format=descriptor.output_schema,
-        )
-
-        # structured_output 是 Pydantic model 实例
-        structured_output = llm.invoke(
-            [
-                {"role": "system", "content": descriptor.system_prompt},
-                {"role": "user", "content": brief_content},
-            ]
-        )
-
-        return SkillResult(
-            skill_id=f"{descriptor.skill_id}@{descriptor.version}",
-            status="done",
-            data=_pydantic_to_dict(structured_output),
-        )
+    for review in stuck_reviews:
+        queue.enqueue(type=review, ref_id=review.id)
 ```
 
-### 3.4 结果聚合与回写
+| 配置项 | 环境变量 | 默认值 | 说明 |
+|--------|---------|--------|------|
+| 健康检查间隔 | `WORKER_HEALTH_CHECK_INTERVAL` | `60` | 扫描周期（秒） |
+| 处理超时 | `WORKER_PROCESSING_TIMEOUT` | `300` | review 卡在 processing 多久视为异常（秒） |
 
-```python
-    def _update_review(
-        self,
-        review_id: UUID,
-        results: dict[str, SkillResult],
-    ) -> None:
-        """将 skill 执行结果聚合写入 brief_arbiter_reviews。
+> 健康回收的代价是**非精确**——worker 崩溃后最多等 `WORKER_HEALTH_CHECK_INTERVAL` 秒才会重新入队。MVP 单 worker 阶段这个延迟完全可接受。
 
-        事务内执行：UPDATE brief_arbiter_reviews SET ...
-        """
-        # 综合评分：各 skill 分数的平均值
-        scores = [
-            r.data.get("completeness_score", 0)
-            for r in results.values()
-            if r.status == "done" and r.data
-        ]
-        overall_score = sum(scores) // len(scores) if scores else None
+### 3.4 ReviewHandler（伪代码）
 
-        # 汇总 issues 和 suggestions
-        all_issues = []
-        all_suggestions = []
-        for r in results.values():
-            if r.status != "done" or not r.data:
-                continue
-            if missing := r.data.get("missing_dimensions"):
-                all_issues.extend(missing)
-            if suggestions := r.data.get("suggestions"):
-                all_suggestions.extend(suggestions)
+```
+ReviewHandler.execute(review):
+    // 1. 加载关联数据
+    brief = load brief by review.brief_id
 
-        # 判断通过/失败：所有 skill 均 done 且整体评分 >= 阈值
-        all_done = all(r.status == "done" for r in results.values())
-        passed = all_done and (overall_score is not None and overall_score >= 60)
+    // 2. 加载 skill（worker 内部决定）
+    skill = load_skill("brief-review", "latest")
 
-        with self._session_factory() as session:
-            review = session.get(BriefArbiterReview, review_id)
-            if review is None:
-                raise ValueError(f"Review not found: {review_id}")
+    // 3. 调用 LLM
+    result = invoke_llm(
+        system_prompt = skill.system_prompt,
+        user_content = brief.content,
+        model = skill.model,
+        output_schema = skill.output_schema
+    )
 
-            review.status = ArbiterReviewStatus.PASSED if passed else ArbiterReviewStatus.FAILED
-            review.score = overall_score
-            review.issues = all_issues
-            review.suggestions = all_suggestions
-            review.reviewed_at = datetime.utcnow()
-            review.arbiter_id = "async-arbiter-v1"  # 区别于 force_skip
+    // 4. LLM 调用本身失败（超时、限流等）
+    if result.error:
+        raise TransientError(result.error)
 
-            session.commit()
+    // 5. 更新 review 记录（独立事务）
+    if result.passed:
+        review.status = passed
+    else:
+        review.status = rejected
+    review.score = result.score
+    review.issues = result.issues
+    review.suggestions = result.suggestions
+    review.reviewed_at = now()
+    review.save()
 ```
 
-## 4. 启动与运维
+> `ReviewHandler` 内部不处理重试——如果 LLM 调用失败，底层抛出 `TransientError`，由主循环统一处理 re-enqueue。如果更新业务表失败（DB 异常），同样向上抛，由主循环重试。
 
-### 4.1 入口命令
+### 3.5 处理器注册
 
-```bash
-# 作为独立进程启动（uv 运行）
-uv run python -m src.briefchain.arbiter.worker
-
-# 或通过 systemd / supervisord 守护
+```
+resolve_handler(type) → Handler:
+    "review"  → ReviewHandler
+    "summary" → SummaryHandler（未来）
+    unknown   → raise UnsupportedTaskType
 ```
 
-### 4.2 进程管理
+新增任务类型只需实现 Handler 接口并注册，不影响队列和 worker 主循环。
 
-| 场景 | 处理方式 |
-|------|---------|
-| 正常启动 | `ArbiterWorker.run()` 进入循环 |
-| SIGTERM / SIGINT | 设置 `_running=False`，当前任务处理完后退出 |
-| 进程崩溃 | systemd/supervisord 自动重启 |
-| 崩溃时卡在 processing 的任务 | 健康回收：locked_at > 5min → 被下次 dequeue 重新认领 |
+## 4. 重试策略
 
-### 4.3 配置项
+| 配置项 | 归属 | 说明 |
+|--------|------|------|
+| `max_retries` | worker 配置（`WORKER_MAX_RETRIES`） | 最大重试次数，默认 3 |
+| `attempt_count` | `brief_arbiter_reviews` 字段 | 已执行次数，每次尝试 +1 |
+| `error` | `brief_arbiter_reviews` 字段 | 最近一次失败原因 |
 
-```python
-# 环境变量控制
-ARBITER_WORKER_POLL_INTERVAL=2.0    # 无任务时空闲轮询间隔（秒）
-ARBITER_WORKER_VISIBILITY_TIMEOUT=300   # processing 任务超时回收时间（秒）
-ARBITER_WORKER_LOCK_REFRESH=60      # 长任务定期刷新锁间隔（秒）
+重试决策流程：
+
 ```
+任务执行失败
+    │
+    ├── 是否 transient（LLM 超时、限流）？
+    │   └── 是 → review.attempt_count + 1
+    │            → queue.enqueue（重新入队）
+    │            → 下轮 dequeue 后 attempt_count ≥ max_retries → mark failed
+    │
+    └── 是否非 transient（DB 异常等）？
+        └── 同样 re-enqueue——靠 attempt_count 上限兜底
+```
+
+> **关键区分**：`rejected`（审核未通过）不是错误，是正常结论。Handler 直接设置 `review.status = rejected`，不会抛异常。只有 LLM 调用异常或 DB 异常才会触发重试。
 
 ## 5. 错误处理矩阵
 
-| 错误阶段 | 处理策略 |
+| 错误场景 | 处理方式 |
 |---------|---------|
-| dequeue 失败 | 记录日志，sleep 后重试 |
-| skill 不存在（SkillSelector 解析失败） | 立即 mark_failed，不重试（配置错误不会自动恢复） |
-| 单个 skill 执行失败 | 记录进 results，同任务其他 skill 正常执行 |
-| 全部 skill 执行失败 | mark_failed，retry_count < max_retries 则重试 |
-| update_review 失败 | mark_failed（LLM 结果无法持久化，等效于任务失败） |
-| webhook 发送失败 | 记录日志并静默丢弃（回调 = 尽力而为，前端可轮询兜底） |
+| dequeue 返回 null | sleep poll_interval 后继续 |
+| handler 不存在（未知 type） | 记录日志，跳过（不自动恢复的任务不应卡住队列） |
+| review 已处于终态（幂等） | 跳过，不处理 |
+| attempt_count ≥ max_retries | review.status = failed，webhook 通知 |
+| LLM 调用失败（超时 / 限流） | re-enqueue（attempt_count + 1 在 re-enqueue 前完成） |
+| LLM 返回 rejected | 正常处理：review.status = rejected，通过（不是错误） |
+| 更新业务表失败（DB 异常） | re-enqueue 重试 |
+| webhook 发送失败 | 记录日志并静默丢弃（前端可轮询兜底） |
+| worker 进程崩溃 | 主进程检测到子进程退出后自动重启；启动时健康回收扫描 stuck reviews |
 
-## 6. Skill 结果数据结构
+## 6. 启动与运维
 
-### 6.1 `SkillResult`
+### 6.1 子进程模式
 
-```python
-@dataclass
-class SkillResult:
-    skill_id: str           # "completeness-review@v2"
-    status: str             # "done" | "error" | "skipped"
-    data: dict | None = None   # Pydantic model 序列化结果
-    error: str | None = None
+FastAPI 主进程启动时通过 `subprocess.Popen` 拉起 worker 子进程，共享同一个虚拟环境和配置：
+
+```
+# FastAPI 主进程启动时
+main():
+    // ... 初始化队列、数据库等共享资源 ...
+
+    worker_process = subprocess.Popen([
+        sys.executable,
+        "-m", "src.briefchain.arbiter.worker"
+    ])
+
+    // 启动 FastAPI
+    uvicorn.run(app, ...)
+
+    // 退出时等待子进程
+    worker_process.terminate()
+    worker_process.wait()
 ```
 
-### 6.2 存储策略
+### 6.2 Worker 启动流程
 
-- Skill 执行结果不建独立表存储（避免过度设计），聚合后直接写入 `brief_arbiter_reviews.issues` 和 `brief_arbiter_reviews.suggestions`
-- 如需追溯各 skill 的原始输出：在 `brief_arbiter_reviews` 新增 `skill_results` JSON 字段
-
-```python
-# 可选扩展：brief_arbiter_reviews 新增字段
-skill_results: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-# 格式：{"completeness-review@v2": {...SkillResult.data...}, ...}
+```
+1. 加载所有 skill 版本
+2. 健康回收：扫描 stuck reviews 并重新入队
+3. 进入主循环
 ```
 
-## 7. 紧耦合 vs 松耦合权衡
+### 6.3 进程管理
 
-当前设计将 worker 和 QueueService 放在同一进程空间：
+| 场景 | 处理方式 |
+|------|---------|
+| 正常启动 | 主进程拉起 → worker 执行启动流程 → 进入主循环 |
+| 主进程 SIGTERM | 转发 SIGTERM 给 worker → 完成当前任务后退出 |
+| worker 崩溃 | 主进程检测子进程退出 → 自动重启（带退避） |
+| 崩溃时正在处理的任务 | 重启后的健康回收扫描 → 重新入队 |
 
-| 维度 | 同进程 worker | 独立进程 worker |
-|------|-------------|----------------|
-| 部署复杂度 | 一个启动命令 | 独立 deploy + 独立监控 |
-| 资源共享 | 共享数据库连接池、Skill 模块 | 需要各自配置 |
-| 故障隔离 | worker crash = 进程 crash | worker crash 不影响 API |
-| 当前阶段适用 | **推荐**（简单，够用） | 等 worker 变复杂或有独立扩缩容需求时再拆 |
+### 6.4 配置项汇总
 
-MVP 阶段推荐同进程启动（`ArbiterWorker` 在 FastAPI 的 `lifespan` 中启动），后续可拆为独立进程。
+| 配置 | 环境变量 | 默认值 | 说明 |
+|------|---------|--------|------|
+| 轮询间隔 | `WORKER_POLL_INTERVAL` | `2.0` | 无任务时空闲间隔（秒） |
+| 最大重试 | `WORKER_MAX_RETRIES` | `3` | 任务失败最大重试次数 |
+| 健康检查间隔 | `WORKER_HEALTH_CHECK_INTERVAL` | `60` | 扫描 stuck reviews 周期（秒） |
+| 处理超时 | `WORKER_PROCESSING_TIMEOUT` | `300` | review 卡在 processing 多久视为异常（秒） |
+| 默认 skill | `BRIEF_REVIEW_SKILL` | `brief-review` | worker 内部使用的 skill 名称 |
+| 系统 webhook URL | `ARBITER_WEBHOOK_URL` | — | 默认回调地址（review 未指定时使用） |

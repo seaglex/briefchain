@@ -25,6 +25,8 @@ from briefchain.api.schemas.briefs import (
     SendBriefRequest,
     UserSnapshot,
 )
+from briefchain.api.schemas.reviews import ReviewAcceptedResponse
+from briefchain.api.services import reviews as review_service
 from briefchain.models import (
     Brief,
     BriefArbiterReview,
@@ -38,7 +40,6 @@ from briefchain.models import (
 from briefchain.models.enums import (
     ArbiterReviewStatus,
     BriefDownstreamState,
-    BriefType,
     BriefUpstreamState,
     BriefVersionStatus,
     FeedbackType,
@@ -691,8 +692,8 @@ def review_brief(
     brief_id: UUID,
     user_id: UUID,
     request: BriefReviewRequest,
-) -> BriefDetail:
-    """Submit the requested draft version for review."""
+) -> ReviewAcceptedResponse:
+    """Submit the requested draft version for asynchronous Arbiter review."""
     brief = _load_brief_with_versions(session, brief_id)
     _require_creator(brief, user_id)
 
@@ -722,30 +723,12 @@ def review_brief(
             status_code=409,
         )
 
-    # MVP: auto-pass Arbiter review.
-    review = BriefArbiterReview(
-        id=uuid4(),
-        brief_id=brief.brief_id,
-        brief_version=version.version,
-        arbiter_id="force_skip",
-        status=ArbiterReviewStatus.FORCE_SKIPPED,
-        score=None,
-        issues=[],
-        suggestions=[],
-        reviewed_at=_now(),
+    return review_service.create_review(
+        session,
+        brief_id,
+        user_id,
+        review_service.ReviewCreateRequest(),
     )
-    session.add(review)
-    session.flush()
-
-    version.status = BriefVersionStatus.REVIEWED
-    version.arbiter_review_id = review.id
-    version.modified_at = _now()
-
-    session.commit()
-    session.refresh(brief)
-    brief = _load_brief_with_versions(session, brief.brief_id)
-
-    return _serialize_brief(brief, version=version, detail=True)
 
 
 def send_brief(
@@ -756,6 +739,7 @@ def send_brief(
 ) -> BriefLifecycleResponse:
     """Send a reviewed or previously-final brief to a downstream user or external recipient."""
     from briefchain.api.services import invites as invite_service
+    from briefchain.api.services.reviews import get_latest_review
 
     now = _now()
     brief = _load_brief_with_versions(session, brief_id)
@@ -763,12 +747,24 @@ def send_brief(
 
     version = _current_version(brief)
     if version is None or version.status not in (
+        BriefVersionStatus.DRAFT,
         BriefVersionStatus.REVIEWED,
         BriefVersionStatus.FINAL,
     ):
         raise APIError(
             code="INVALID_STATUS",
-            message="Only reviewed or final brief versions can be sent",
+            message="Only editable or previously-sent brief versions can be sent",
+            status_code=409,
+        )
+
+    latest_review = get_latest_review(session, brief_id)
+    if latest_review is None or latest_review.status not in (
+        ArbiterReviewStatus.PASSED,
+        ArbiterReviewStatus.FORCE_SKIPPED,
+    ):
+        raise APIError(
+            code="REVIEW_REQUIRED",
+            message="Brief must pass Arbiter review before sending",
             status_code=409,
         )
 
@@ -792,8 +788,9 @@ def send_brief(
     assignee = _load_user(session, assigned_to)
 
     # Mark version as final and sync denormalized brief fields.
-    if version.status == BriefVersionStatus.REVIEWED:
+    if version.status in (BriefVersionStatus.DRAFT, BriefVersionStatus.REVIEWED):
         version.status = BriefVersionStatus.FINAL
+    version.arbiter_review_id = latest_review.id
     version.modified_at = now
     brief.current_version = version.version
     _sync_brief_from_version(session, brief, version, state_changed_by=user_id)

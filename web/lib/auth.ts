@@ -21,11 +21,19 @@ export interface BriefChainError {
 }
 
 /** Parse a backend error response into a user-friendly message and optional code. */
-export async function parseBackendError(response: Response): Promise<{ message: string; code?: string }> {
+export async function parseBackendError(response: Response): Promise<{
+  message: string;
+  code?: string;
+  details?: Record<string, unknown>;
+}> {
   try {
-    const data = (await response.json()) as { error?: BriefChainError & { code?: string } };
+    const data = (await response.json()) as { error?: BriefChainError };
     if (data.error?.message) {
-      return { message: data.error.message, code: data.error.code };
+      return {
+        message: data.error.message,
+        code: data.error.code,
+        details: data.error.details,
+      };
     }
   } catch {
     // fall through to default message
@@ -37,7 +45,10 @@ export async function parseBackendError(response: Response): Promise<{ message: 
 export async function apiFetch<T>(
   path: string,
   options: RequestInit = {}
-): Promise<{ ok: true; data: T } | { ok: false; message: string; code?: string }> {
+): Promise<
+  | { ok: true; data: T }
+  | { ok: false; message: string; code?: string; details?: Record<string, unknown> }
+> {
   const response = await fetch(path, {
     ...options,
     cache: options.cache ?? "no-store",
@@ -48,8 +59,8 @@ export async function apiFetch<T>(
   });
 
   if (!response.ok) {
-    const { message, code } = await parseBackendError(response);
-    return { ok: false, message, code };
+    const { message, code, details } = await parseBackendError(response);
+    return { ok: false, message, code, details };
   }
 
   // Handle 204 No Content

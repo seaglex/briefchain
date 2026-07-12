@@ -24,6 +24,7 @@ from briefchain.models.kanban import (  # noqa: F401
     Task,
     TaskComment,
 )
+from briefchain.models.task_queue import TaskQueue  # noqa: F401
 from briefchain.models.user import User, UserIdentity  # noqa: F401
 
 config = context.config

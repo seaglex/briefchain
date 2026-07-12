@@ -1,357 +1,255 @@
-# Arbiter 异步任务队列设计
+# 通用异步任务队列设计
 
-> 最后更新：2026-07-08
+> 最后更新：2026-07-12
 
 ## 1. 设计目标
 
-基于数据库实现异步任务队列，支持 Arbiter 审核的异步处理。核心要求：
-
-- **最少外部依赖**——不引入 Redis、RabbitMQ 等中间件，直接使用现有数据库
-- **接口抽象**——队列接口封装良好，与具体数据库解耦，可替换实现
-- **事务安全**——取任务、完成任务、失败重试均在独立事务内，LLM 调用不持有数据库事务
-- **健康回收**——worker 崩溃后，卡在 `processing` 状态的任务可被重新认领
+- **通用**——不绑定特定业务。当前服务于 Arbiter 审核（type=review），未来可扩展任务进度总结（type=summary）等
+- **与实现无关**——队列接口抽象，MVP 用数据库实现，将来可无缝替换为 Redis / MQ / Kafka
+- **最少外部依赖**——MVP 阶段不引入中间件，直接使用现有数据库
+- **极简语义**——队列只管投递和取出，不管理任务生命周期。dequeue 即删除——取走就没了
+- **业务层兜底**——重试、超时回收、重复执行防护全部在业务层（`brief_arbiter_reviews` + worker）实现
 
 ## 2. 数据模型
 
-### 2.1 队列表：`arbiter_review_tasks`
+### 2.1 通用队列表：`task_queue`
 
-```sql
-CREATE TABLE arbiter_review_tasks (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),   -- PostgreSQL
-    -- id        TEXT PRIMARY KEY,                              -- SQLite fallback
-    review_id    UUID NOT NULL,                                -- FK → brief_arbiter_reviews.id
-    brief_id     UUID NOT NULL,                                -- FK → briefs.brief_id（冗余，方便查询）
-    skill_ids    JSON NOT NULL DEFAULT '[]',                   -- 需执行的 skill id 列表
-    status       VARCHAR(16) NOT NULL DEFAULT 'pending',       -- pending / processing / done / failed
-    retry_count  INTEGER NOT NULL DEFAULT 0,
-    max_retries  INTEGER NOT NULL DEFAULT 3,
-    error        TEXT,
-    locked_at    TIMESTAMPTZ,
-    finished_at  TIMESTAMPTZ,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+队列只存最小必要信息，不记录状态、不记录重试次数、不记录错误。
 
--- 高效取 pending 任务
-CREATE INDEX idx_tasks_pending ON arbiter_review_tasks (created_at)
-    WHERE status = 'pending';
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | UUID PK | 任务 ID |
+| `type` | VARCHAR(32) | 任务类型：`review` / `summary` / ... |
+| `ref_id` | UUID | 引用业务实体 ID（如 `brief_arbiter_reviews.id`） |
+| `created_at` | TIMESTAMPTZ | 入队时间（用于 FIFO 排序） |
 
--- 健康回收：认领超时的 processing 任务
-CREATE INDEX idx_tasks_processing_locked
-    ON arbiter_review_tasks (locked_at)
-    WHERE status = 'processing';
-```
+索引：
 
-### 2.2 任务状态机
+| 索引 | 用途 |
+|------|------|
+| `idx_queue_fetch (created_at)` | 按 FIFO 顺序取最早任务 |
+
+> 没有 `status`——任务只有一种存在形式：在队列里。被 dequeue 后行即删除，不需要 `processing` / `done` / `failed` 等状态。
+> 没有 `retry_count`、`locked_at`、`error`、`finished_at`——这些都是业务层（`brief_arbiter_reviews`）关心的事。
+
+### 2.2 队列的生命周期
 
 ```
-              ┌──────────┐
-              │  pending  │
-              └─────┬─────┘
-                    │ dequeue（取任务）
-                    ▼
-              ┌──────────────┐
-          ┌───│  processing  │───┐  locked_at > now() - 5min
-          │   └──────┬───────┘   │  （健康回收 → 回到 pending）
-          │          │           │
-          │   ┌──────┴──────┐    │
-          │   ▼              ▼    │
-          │ ┌────┐        ┌──────┐│ retry_count < max_retries
-          │ │done│        │failed ├│ （重置为 pending + 清空 locked_at）
-          │ └────┘        └──┬───┘│
-          │                  │    │
-          │   retry_count >= max_retries
-          │                  │
-          │             ┌────▼────┐
-          └─────────────│ failed  │（终态）
-                        └─────────┘
+enqueue → [在表中] → dequeue → [已删除，不再存在]
 ```
 
-## 3. 接口抽象
+队列没有状态机。任务要么在表里等着被取，要么已经被取走删掉了。
 
-### 3.1 `AbstractQueueService`
+### 2.3 `brief_arbiter_reviews` 扩展
 
-```python
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from datetime import datetime
-from enum import Enum
-from uuid import UUID
+队列的极简化意味着业务表需要接管所有生命周期管理。`brief_arbiter_reviews` 扩展如下：
 
+**状态枚举：**
 
-class TaskStatus(str, Enum):
-    PENDING = "pending"
-    PROCESSING = "processing"
-    DONE = "done"
-    FAILED = "failed"
+| 状态 | 含义 | 是否新增 |
+|------|------|---------|
+| `processing` | 已入队，异步处理中 | **新增** |
+| `passed` | 审核通过（内容质量合格） | 原有 |
+| `rejected` | 审核未通过（内容质量问题，需修改） | **新增** |
+| `failed` | 执行失败（技术错误，已达重试上限） | **含义变更** |
+| `force_skipped` | 强制跳过 | 原有（MVP 不启用） |
 
+**新增字段：**
 
-@dataclass
-class QueueTask:
-    """队列任务，跨越 DB 事务边界传输的最小数据单元。"""
-    id: UUID
-    review_id: UUID
-    brief_id: UUID
-    skill_ids: list[str]  # ["skill-completeness@v2", "skill-ambiguity@v1"]
-    retry_count: int
-    max_retries: int
-    error: str | None = None
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `attempt_count` | INTEGER DEFAULT 0 | 执行尝试次数（worker 用于判断重试上限） |
+| `last_attempt_at` | TIMESTAMPTZ | 最近一次尝试时间（worker 健康检查用） |
+| `error` | TEXT | 最近一次错误原因 |
+| `webhook_url` | VARCHAR(512) | 回调地址（可选，为空则使用系统默认） |
 
+> `max_retries` 是 worker 配置项（环境变量），不在数据表中。
 
-class AbstractQueueService(ABC):
-    """数据库无关的异步任务队列接口。
+业务表状态流转：
 
-    所有方法均在自己的数据库事务内执行。
-    实现方需处理 FOR UPDATE SKIP LOCKED 的数据库差异。
-    """
-
-    @abstractmethod
-    def enqueue(
-        self,
-        review_id: UUID,
-        brief_id: UUID,
-        skill_ids: list[str],
-    ) -> QueueTask:
-        """创建任务并入队。返回创建的 task。
-
-        事务内：
-        1. INSERT INTO arbiter_review_tasks (review_id, brief_id, skill_ids, status='pending')
-        2. COMMIT
-        """
-
-    @abstractmethod
-    def dequeue(self, visibility_timeout_seconds: int = 300) -> QueueTask | None:
-        """取出一个待处理任务并标记为 processing。
-
-        事务内：
-        1. SELECT ... WHERE status='pending'
-              OR (status='processing' AND locked_at < now() - visibility_timeout)
-           ORDER BY created_at LIMIT 1
-           FOR UPDATE SKIP LOCKED
-        2. UPDATE SET status='processing', locked_at=now()
-        3. COMMIT
-        4. 返回 QueueTask（用于事务外处理）
-        5. 无任务返回 None
-        """
-
-    @abstractmethod
-    def mark_done(self, task_id: UUID) -> None:
-        """标记任务完成。事务内 UPDATE + COMMIT。"""
-
-    @abstractmethod
-    def mark_failed(self, task_id: UUID, error: str) -> None:
-        """标记任务失败（需重试或终态失败）。
-
-        事务内：
-        1. 如果 retry_count < max_retries：
-           UPDATE SET status='pending', retry_count+1, error=?, locked_at=NULL
-        2. 如果 retry_count >= max_retries：
-           UPDATE SET status='failed', error=?, finished_at=now()
-        3. COMMIT
-        """
-
-    @abstractmethod
-    def touch_lock(self, task_id: UUID) -> None:
-        """刷新锁时间，用于长时间执行的 task 避免被健康回收。
-        事务内：UPDATE SET locked_at=now() WHERE id=?
-        """
+```
+创建 review → status = processing
+    │
+    ├── worker 执行成功，内容合格 → passed
+    ├── worker 执行成功，内容不合格 → rejected
+    ├── worker 执行失败，attempt_count < max_retries → 重新 enqueue，attempt_count + 1
+    ├── worker 执行失败，attempt_count ≥ max_retries → failed（终态）
+    └── 用户强制跳过 → force_skipped（MVP 暂不实现）
 ```
 
-### 3.2 实现分派
+## 3. 队列接口
 
-通过配置动态选择实现，不依赖硬编码：
+### 3.1 接口定义（伪代码）
 
-```python
-# src/briefchain/queue/__init__.py
-from src.briefchain.queue.base import AbstractQueueService
-from src.briefchain.queue.postgres import PostgresQueueService
-from src.briefchain.queue.sqlite import SQLiteQueueService
+```
+interface TaskQueue:
 
+    enqueue(type, ref_id) → task_id
+        插入 task_queue 记录 (type, ref_id)
+        提交事务
+        返回 task_id
+        // 不防重——重复执行防护在业务层
+        // 不记录状态——队列不关心任务后续生命周期
 
-def create_queue_service(session_factory) -> AbstractQueueService:
-    """根据数据库 URL 自动选择队列实现。"""
-    from src.briefchain.api.config import get_settings
-    db_type = get_settings().database_url.split("://")[0]
-
-    if db_type == "postgresql":
-        return PostgresQueueService(session_factory)
-    if db_type == "sqlite":
-        return SQLiteQueueService(session_factory)
-    raise ValueError(f"Unsupported database type: {db_type}")
+    dequeue() → task | null
+        取最早的记录，删除并返回
+        提交事务
+        返回 task（含 id, type, ref_id）
+        无记录返回 null
+        // dequeue 即删除——取走就没了，无需 ack
+        // 如果 worker 崩溃，业务层健康检查负责重新 enqueue
 ```
 
-## 4. 数据库差异适配
+### 3.2 实现无关性
 
-### 4.1 PostgreSQL 实现
+接口中没有任何数据库特定概念。具体实现负责适配：
 
-```python
-class PostgresQueueService(AbstractQueueService):
-    def dequeue(self, visibility_timeout_seconds: int = 300) -> QueueTask | None:
-        with self.session_factory() as session:
-            cutoff = datetime.utcnow() - timedelta(seconds=visibility_timeout_seconds)
+| 实现 | dequeue 方式 | 适用阶段 |
+|------|-------------|---------|
+| PostgreSQL | `DELETE ... ORDER BY created_at RETURNING *` | 生产环境 |
+| SQLite | `DELETE ... ORDER BY created_at RETURNING *` | 开发 / MVP |
+| Redis（未来） | `BRPOP` 阻塞弹出 | 高吞吐场景 |
+| Kafka / MQ（未来） | consumer group offset | 事件驱动架构 |
 
-            row = session.execute(
-                select(ArbiterReviewTask)
-                .where(
-                    or_(
-                        ArbiterReviewTask.status == TaskStatus.PENDING,
-                        and_(
-                            ArbiterReviewTask.status == TaskStatus.PROCESSING,
-                            ArbiterReviewTask.locked_at < cutoff,
-                        ),
-                    )
-                )
-                .order_by(ArbiterReviewTask.created_at)
-                .limit(1)
-                .with_for_update(skip_locked=True)  # ← PostgreSQL 原生支持
-            ).scalar_one_or_none()
+切换实现时，只需替换 `TaskQueue` 的具体类，调用方代码不变。
 
-            if row is None:
-                session.commit()
-                return None
+### 3.3 实现选择
 
-            row.status = TaskStatus.PROCESSING
-            row.locked_at = datetime.utcnow()
-            session.commit()
-
-            return QueueTask(
-                id=row.id,
-                review_id=row.review_id,
-                brief_id=row.brief_id,
-                skill_ids=row.skill_ids,
-                retry_count=row.retry_count,
-                max_retries=row.max_retries,
-            )
+```
+create_queue_service(config) → TaskQueue:
+    根据 config.queue_backend 选择实现
+    "database" → DatabaseTaskQueue（PostgreSQL 或 SQLite，自动检测）
+    "redis"    → RedisTaskQueue（未来）
+    默认 "database"
 ```
 
-### 4.2 SQLite 实现
+## 4. 数据库实现（MVP）
 
-SQLite 不支持 `FOR UPDATE SKIP LOCKED`，使用 `BEGIN IMMEDIATE` 事务 + 乐观锁：
+### 4.1 PostgreSQL
 
-```python
-class SQLiteQueueService(AbstractQueueService):
-    def dequeue(self, visibility_timeout_seconds: int = 300) -> QueueTask | None:
-        from src.briefchain.queue.sqlite import _now_iso
+`dequeue` 核心：`DELETE ... ORDER BY created_at RETURNING *`，删除最早的一条记录并返回：
 
-        cutoff = _now_iso(offset=-visibility_timeout_seconds)
-
-        with self.session_factory() as session:
-            # SQLite 的 BEGIN IMMEDIATE 会立即获取写锁，等效于串行化
-            # 单 worker 场景下无竞争；多 worker 场景下 natural serialization
-            session.execute(text("BEGIN IMMEDIATE"))
-
-            row = session.execute(
-                select(ArbiterReviewTask)
-                .where(
-                    or_(
-                        ArbiterReviewTask.status == TaskStatus.PENDING,
-                        and_(
-                            ArbiterReviewTask.status == TaskStatus.PROCESSING,
-                            ArbiterReviewTask.locked_at < cutoff,
-                        ),
-                    )
-                )
-                .order_by(ArbiterReviewTask.created_at)
-                .limit(1)
-            ).scalar_one_or_none()
-
-            if row is None:
-                session.commit()
-                return None
-
-            # 以 status 作为乐观锁条件，防止多 worker 竞争
-            result = session.execute(
-                update(ArbiterReviewTask)
-                .where(
-                    ArbiterReviewTask.id == row.id,
-                    ArbiterReviewTask.status == row.status,  # ← 乐观锁
-                )
-                .values(status=TaskStatus.PROCESSING, locked_at=_now_iso())
-            )
-            if result.rowcount == 0:
-                # 被其他 worker 抢先了，回退
-                session.commit()
-                return None
-
-            session.commit()
-            return _to_queue_task(row)
+```
+dequeue():
+    BEGIN
+    DELETE FROM task_queue
+      WHERE id = (
+        SELECT id FROM task_queue
+        ORDER BY created_at
+        LIMIT 1
+      )
+      RETURNING *                     -- 返回被删除的行
+    COMMIT
+    return task | null
 ```
 
-## 5. 事务边界（关键约束）
+### 4.2 SQLite
+
+SQLite 同样支持 `DELETE ... ORDER BY ... LIMIT ... RETURNING`（3.35+）：
+
+```
+dequeue():
+    BEGIN IMMEDIATE
+    DELETE FROM task_queue
+      WHERE id = (
+        SELECT id FROM task_queue
+        ORDER BY created_at
+        LIMIT 1
+      )
+      RETURNING *
+    COMMIT
+    return task | null
+```
+
+> `BEGIN IMMEDIATE` 获取写锁，防止并发 delete 同一条记录。单 worker 场景下无竞争，多 worker 场景下由数据库串行化保证不重复。
+
+### 4.3 Redis（未来参考）
+
+```
+enqueue:  LPUSH queue:pending {json_string}
+dequeue:  BRPOP queue:pending {timeout}
+```
+
+两个原生命令，不需要 Lua 脚本，不需要 processing 列表。
+
+## 5. 事务边界
 
 **绝不在数据库事务内调用 LLM 或发送 HTTP 请求。**
 
 ```
-取任务事务（dequeue）         LLM 调用（无事务）        完成任务事务（mark_done）
-┌──────────────────┐        ┌──────────────┐        ┌──────────────────┐
-│ BEGIN             │        │              │        │ BEGIN             │
-│ SELECT ... FOR UP │        │ call_llm()   │        │ UPDATE task=done  │
-│ UPDATE processing │        │   (5-30s)    │        │ UPDATE review=... │
-│ COMMIT ← 事务结束  │        │              │        │ COMMIT            │
-└──────────────────┘        └──────────────┘        └──────┬───────────┘
-                                                           │
-                                             ┌─────────────▼──────────┐
-                                             │ fire_webhook(review_id) │
-                                             │ （事务外，不阻塞）       │
-                                             └────────────────────────┘
+dequeue 事务                      LLM 调用（无事务）
+┌──────────────┐                 ┌──────────────┐
+│ BEGIN         │                 │              │
+│ DELETE ...    │  删除，取走任务  │ 执行 skill    │
+│ RETURNING *   │                 │ 调 LLM       │
+│ COMMIT        │                 │ (5-30s)      │
+└──────────────┘                 │              │
+                                 └──────┬───────┘
+                                        │
+                         ┌──────────────▼──────────┐
+                         │ 更新业务表 + webhook      │
+                         │                          │
+                         │ 如果成功:                 │
+                         │   review.status = passed  │
+                         │   或 rejected             │
+                         │   → 事务提交              │
+                         │                          │
+                         │ 如果失败:                 │
+                         │   attempt_count + 1       │
+                         │   未达上限 → re-enqueue    │
+                         │   已达上限 → failed        │
+                         │   → 事务提交              │
+                         │                          │
+                         │ 事务提交后: webhook 通知    │
+                         └──────────────────────────┘
 ```
 
-## 6. 与现有模型的集成
+## 6. 职责分离
 
-### 6.1 与 `brief_arbiter_reviews` 的关系
+### 6.1 task_queue vs brief_arbiter_reviews
 
-`arbiter_review_tasks` 是队列表，`brief_arbiter_reviews` 是结论表：
+| 维度 | task_queue | brief_arbiter_reviews |
+|------|-----------|----------------------|
+| 职责 | **投递**——FIFO 缓冲，取走即删 | **业务全生命周期**——状态、重试、结论、回调 |
+| 数据结构 | id, type, ref_id, created_at | status, attempt_count, score, issues, webhook_url, ... |
+| 通用性 | 通用（type=review / summary / ...） | review 专属 |
+| 生命周期 | 入队 → 出队（删除） | 创建 → 处理中 → 终态（永久保留） |
+| 读写模式 | 写多读多（入队/出队频繁） | 写少读多（用户查看审核结果） |
 
-| 维度 | arbiter_review_tasks | brief_arbiter_reviews |
-|------|---------------------|-----------------------|
-| 用途 | 工作队列（取任务、重试、回收） | 审核结论（读给用户、关联 brief） |
-| 生命周期 | done 后可归档清理 | 永久保留 |
-| 读写模式 | 写多读少（worker 持续消费） | 写少读多（用户查看审核结果） |
-| 索引 | status + created_at | brief_id + reviewed_at |
+### 6.2 重复执行防护
 
-### 6.2 `brief_arbiter_reviews.status` 扩展
+队列层不防重（`enqueue` 不检查是否已有相同任务）。防重在**业务层**：
 
-原有的 `ArbiterReviewStatus` 枚举需扩展以支持异步审查的中间态：
-
-```python
-class ArbiterReviewStatus(str, Enum):
-    PASSED = "passed"
-    FAILED = "failed"
-    FORCE_SKIPPED = "force_skipped"
-    REVIEWING = "reviewing"        # ← 新增：已入队，等待异步处理
-    REVIEW_FAILED = "review_failed" # ← 新增：异步处理失败（终态）
+```
+API 收到审核请求:
+    检查 brief_arbiter_reviews 是否已有 status = processing 的记录
+    if 已存在:
+        返回 409 REVIEW_ALREADY_IN_PROGRESS
+    else:
+        创建 brief_arbiter_reviews (status = processing, attempt_count = 0, webhook_url = ...)
+        queue.enqueue(type=review, ref_id=review.id)
+        返回 202
 ```
 
-## 7. 事件钩子
+Worker 层面也做幂等检查——消费任务后发现 review 已处于终态则跳过。
 
-### 7.1 Webhook 通知
+### 6.3 健康回收
 
-`QueueService` 本身不直接发送 webhook——它只负责队列操作。Webhook 发送由 worker 在事务提交后触发，通过 `AbstractQueueService` 的 **callback 机制**：
+队列没有 `locked_at` 和 `processing` 状态，因此崩溃恢复不在队列层。由 worker 启动时扫描 `brief_arbiter_reviews` 中长时间停留在 `processing` 且 `last_attempt_at` 超时的记录，重新 `enqueue`。
 
-```python
-class AbstractQueueService(ABC):
-    @abstractmethod
-    def register_callback(
-        self,
-        status: TaskStatus,
-        callback: Callable[[QueueTask], None],
-    ) -> None:
-        """注册任务完成/失败后的回调。
+> 详细逻辑见 [11-arbiter-worker-design.md](11-arbiter-worker-design.md) 第 3 节。
 
-        典型用法：
-        queue.register_callback(
-            TaskStatus.DONE,
-            lambda task: webhook_service.notify(task.review_id)
-        )
-        """
+### 6.4 各层职责总结
 
-    @abstractmethod
-    def execute_callbacks(self, task: QueueTask, status: TaskStatus) -> None:
-        """事务提交后调用回调（不抛异常，只记录日志）。"""
-```
+| 层 | 关心什么 | 不关心什么 |
+|----|---------|-----------|
+| **task_queue** | type, ref_id, FIFO 顺序 | 状态、重试、业务结果、健康回收、webhook |
+| **brief_arbiter_reviews** | 审核状态（processing/passed/rejected/failed）、attempt_count、webhook_url、结论详情、防重 | 队列实现细节 |
+| **worker** | skill 执行、重试决策、健康回收、webhook 通知 | 队列实现细节 |
+| **API** | 创建 review、防重检查、入队、返回 202 | LLM 执行过程 |
 
-### 7.2 回调实现约束
+### 6.5 为什么不需要 ack / nack
 
-- 回调内部不得持有数据库事务
-- 回调失败不影响队列状态（队列 = 唯一真实状态，回调 = 尽力而为通知）
-- 回调抛出的异常被捕获并记录，不向上传播
+`dequeue` 删除记录后，如果 worker 执行成功——不需要 ack，任务已经不存在了。如果 worker 执行失败——重新 `enqueue` 即可，不需要 nack，因为 nack 的本质是"放回队列"，而 `enqueue` 就是"放回队列"。
+
+队列本身只管"有没有新任务要处理"。任务处理完了还是失败了，是业务层的事。

@@ -332,10 +332,21 @@ class BriefArbiterReview(Base, TimestampMixin):
     issues: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
     suggestions: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
 
-    reviewed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+    attempt_count: Mapped[int] = mapped_column(
+        Integer,
         nullable=False,
-        server_default=func.now(),
+        default=0,
+    )
+    last_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    webhook_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     brief: Mapped[Brief] = relationship(

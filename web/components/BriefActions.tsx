@@ -1,12 +1,46 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch, isNonEmpty } from "@/lib/auth";
 import { isoToLocalDate, localDateToEndOfDayISO } from "@/lib/date";
 import { sendBrief } from "@/lib/invites";
 import { BRIEF_TYPE_LABELS, type BriefType } from "@/lib/brief-types";
 import UserSelector from "@/components/UserSelector";
+
+interface ReviewResponse {
+  review_id: string;
+  brief_id: string;
+  brief_version: number;
+  status: string;
+  attempt_count: number;
+  created_at: string;
+  arbiter_id?: string | null;
+  score?: number | null;
+  issues?: Array<{ text: string } | string> | null;
+  suggestions?: string[] | null;
+  error?: string | null;
+  reviewed_at?: string | null;
+}
+
+function SpinnerIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      xmlns="http://www.w3.org/2000/svg"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+    </svg>
+  );
+}
 
 interface BriefActionsProps {
   briefId: string;
@@ -46,6 +80,9 @@ export default function BriefActions({
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reviewing, setReviewing] = useState(false);
+  const [pollingReviewId, setPollingReviewId] = useState<string | null>(null);
+  const [reviewResult, setReviewResult] = useState<ReviewResponse | null>(null);
 
   // Edit / update form state
   const [editMode, setEditMode] = useState<"patch" | "update">("patch");
@@ -75,6 +112,7 @@ export default function BriefActions({
     | "open"
     | "delegate"
     | "block"
+    | "review_result"
   >(null);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [reason, setReason] = useState("");
@@ -175,19 +213,82 @@ export default function BriefActions({
       setError("缺少提交审查的版本号");
       return;
     }
-    setLoading(true);
+
+    setReviewing(true);
     setError(null);
-    const result = await apiFetch(`/api/briefs/${briefId}/editing?action=submit-review`, {
+    setReviewResult(null);
+
+    const webhookUrl =
+      typeof window !== "undefined"
+        ? `${window.location.origin}/api/webhooks/reviews`
+        : undefined;
+
+    const result = await apiFetch<ReviewResponse>(`/api/briefs/${briefId}/reviews`, {
       method: "POST",
-      body: JSON.stringify({ version: updateVersion }),
+      body: JSON.stringify({ webhook_url: webhookUrl }),
     });
-    setLoading(false);
+
     if (!result.ok) {
+      setReviewing(false);
+      if (result.code === "REVIEW_ALREADY_IN_PROGRESS") {
+        const existingReviewId =
+          typeof result.details?.existing_review_id === "string"
+            ? result.details.existing_review_id
+            : undefined;
+        window.alert("已有审核正在进行中，请等待完成");
+        if (existingReviewId) {
+          setReviewing(true);
+          setPollingReviewId(existingReviewId);
+        }
+        return;
+      }
       setError(result.message);
       return;
     }
-    router.refresh();
+
+    setPollingReviewId(result.data.review_id);
   };
+
+  useEffect(() => {
+    if (!pollingReviewId) return;
+
+    const maxAttempts = 150; // ~5 minutes at 2s interval
+    let attempts = 0;
+
+    const poll = async () => {
+      attempts += 1;
+
+      const result = await apiFetch<ReviewResponse>(
+        `/api/briefs/${briefId}/reviews/${pollingReviewId}`,
+        { method: "GET" }
+      );
+      if (!result.ok) {
+        setReviewing(false);
+        setPollingReviewId(null);
+        setError(result.message);
+        return;
+      }
+
+      setReviewResult(result.data);
+
+      if (["passed", "rejected", "failed", "force_skipped"].includes(result.data.status)) {
+        setReviewing(false);
+        setPollingReviewId(null);
+        if (result.data.status === "rejected" || result.data.status === "failed") {
+          setModal("review_result");
+        }
+        router.refresh();
+      } else if (attempts >= maxAttempts) {
+        setReviewing(false);
+        setPollingReviewId(null);
+        setError("审核等待超时，请稍后刷新页面查看结果");
+      }
+    };
+
+    poll();
+    const interval = setInterval(poll, 2000);
+    return () => clearInterval(interval);
+  }, [pollingReviewId, briefId, router]);
 
   const handleSend = async () => {
     if (sendMode === "registered") {
@@ -338,6 +439,8 @@ export default function BriefActions({
         return "委托说明";
       case "block":
         return "标记阻塞";
+      case "review_result":
+        return "审核结果";
       default:
         return "";
     }
@@ -562,13 +665,58 @@ export default function BriefActions({
                 />
               </div>
             )}
+
+            {modal === "review_result" && reviewResult && (
+              <div className="space-y-12">
+                <div className="flex items-center gap-8">
+                  <span className="text-2">状态：</span>
+                  <span className={`badge badge-${reviewResult.status === "passed" ? "accepted" : reviewResult.status === "rejected" ? "rejected" : reviewResult.status === "failed" ? "cancelled" : "reviewed"}`}>
+                    {reviewResult.status}
+                  </span>
+                </div>
+                {typeof reviewResult.score === "number" && (
+                  <div className="metric">
+                    <div className="metric-label">审核得分</div>
+                    <div className="metric-value">{reviewResult.score}</div>
+                  </div>
+                )}
+                {reviewResult.error && (
+                  <div className="error-message">{reviewResult.error}</div>
+                )}
+                {reviewResult.issues && reviewResult.issues.length > 0 && (
+                  <div className="form-group">
+                    <label className="form-label">问题</label>
+                    <ul className="text-2" style={{ paddingLeft: 20 }}>
+                      {reviewResult.issues.map((issue, idx) => (
+                        <li key={idx}>{typeof issue === "string" ? issue : issue.text}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {reviewResult.suggestions && reviewResult.suggestions.length > 0 && (
+                  <div className="form-group">
+                    <label className="form-label">建议</label>
+                    <ul className="text-2" style={{ paddingLeft: 20 }}>
+                      {reviewResult.suggestions.map((suggestion, idx) => (
+                        <li key={idx}>{suggestion}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {reviewResult.reviewed_at && (
+                  <div className="text-3" style={{ fontSize: 12 }}>
+                    完成时间：{new Date(reviewResult.reviewed_at).toLocaleString("zh-CN")}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="modal-footer">
             <button className="btn" onClick={closeModal} disabled={loading}>
               {modal === "send" && inviteResult ? "关闭" : "取消"}
             </button>
-            {!(modal === "send" && inviteResult) && (
+            {!(modal === "send" && inviteResult) && modal !== "review_result" && (
               <button
                 className="btn btn-primary"
                 onClick={() => {
@@ -585,6 +733,11 @@ export default function BriefActions({
                 disabled={loading}
               >
                 {loading ? "提交中..." : "确认"}
+              </button>
+            )}
+            {modal === "review_result" && (
+              <button className="btn btn-primary" onClick={closeModal}>
+                关闭
               </button>
             )}
             {modal === "send" && inviteResult && (
@@ -614,16 +767,23 @@ export default function BriefActions({
           <button
             className="btn btn-sm"
             onClick={() => startEdit("patch")}
-            disabled={loading}
+            disabled={loading || reviewing}
           >
             修改
           </button>
           <button
-            className="btn btn-sm btn-primary"
+            className="btn btn-sm btn-primary flex items-center gap-4"
             onClick={handleReview}
-            disabled={loading}
+            disabled={loading || reviewing}
           >
-            审核
+            {reviewing ? (
+              <>
+                <SpinnerIcon className="animate-spin" />
+                审核中
+              </>
+            ) : (
+              "审核"
+            )}
           </button>
         </div>
       );
@@ -880,16 +1040,23 @@ export default function BriefActions({
           <button
             className="btn btn-sm"
             onClick={() => startEdit("patch")}
-            disabled={loading}
+            disabled={loading || reviewing}
           >
             修改
           </button>
           <button
-            className="btn btn-sm btn-primary"
+            className="btn btn-sm btn-primary flex items-center gap-4"
             onClick={handleReview}
-            disabled={loading}
+            disabled={loading || reviewing}
           >
-            审核
+            {reviewing ? (
+              <>
+                <SpinnerIcon className="animate-spin" />
+                审核中
+              </>
+            ) : (
+              "审核"
+            )}
           </button>
         </div>
       );

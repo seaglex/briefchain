@@ -1,5 +1,6 @@
 """Tests for invite link endpoints and temporary user auth flows."""
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
@@ -7,8 +8,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from briefchain.api.security import get_password_hash
-from briefchain.models import Brief, BriefChain, BriefVersion, User
+from briefchain.models import Brief, BriefArbiterReview, BriefChain, BriefVersion, User
 from briefchain.models.enums import (
+    ArbiterReviewStatus,
     BriefPriority,
     BriefUpstreamState,
     BriefVersionStatus,
@@ -65,7 +67,19 @@ def reviewed_brief_for_invite(
         owner_name=creator.name,
         priority=BriefPriority.P2,
     )
-    db_session.add_all([brief, version, chain])
+    review = BriefArbiterReview(
+        id=UUID("22222222-2222-2222-2222-222222222222"),
+        brief_id=brief.brief_id,
+        brief_version=1,
+        arbiter_id="async-arbiter-v1",
+        status=ArbiterReviewStatus.PASSED,
+        score=80,
+        issues=[],
+        suggestions=[],
+        reviewed_at=datetime.now(UTC),
+    )
+    version.arbiter_review_id = review.id
+    db_session.add_all([brief, version, chain, review])
     db_session.commit()
     return brief
 
@@ -221,7 +235,19 @@ def test_send_brief_reuses_active_temporary_user(
         owner_name="Creator",
         priority=BriefPriority.P2,
     )
-    db_session.add_all([brief2, version2, chain2])
+    review2 = BriefArbiterReview(
+        id=UUID("33333333-3333-3333-3333-333333333333"),
+        brief_id=brief2.brief_id,
+        brief_version=1,
+        arbiter_id="async-arbiter-v1",
+        status=ArbiterReviewStatus.PASSED,
+        score=80,
+        issues=[],
+        suggestions=[],
+        reviewed_at=datetime.now(UTC),
+    )
+    version2.arbiter_review_id = review2.id
+    db_session.add_all([brief2, version2, chain2, review2])
     db_session.commit()
 
     second = client.post(
@@ -468,7 +494,19 @@ def test_register_migrates_all_active_briefs(
         owner_name="Creator",
         priority=BriefPriority.P2,
     )
-    db_session.add_all([brief2, version2, chain2])
+    review2 = BriefArbiterReview(
+        id=UUID("33333333-3333-3333-3333-333333333333"),
+        brief_id=brief2.brief_id,
+        brief_version=1,
+        arbiter_id="async-arbiter-v1",
+        status=ArbiterReviewStatus.PASSED,
+        score=80,
+        issues=[],
+        suggestions=[],
+        reviewed_at=datetime.now(UTC),
+    )
+    version2.arbiter_review_id = review2.id
+    db_session.add_all([brief2, version2, chain2, review2])
     db_session.commit()
 
     client.post(

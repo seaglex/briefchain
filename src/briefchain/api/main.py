@@ -1,9 +1,14 @@
 """FastAPI application factory and route registration."""
 
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from subprocess import Popen
+
 from fastapi import FastAPI, status
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from briefchain.api.config import settings
 from briefchain.api.exceptions import (
     APIError,
     api_error_handler,
@@ -20,9 +25,29 @@ from briefchain.api.routes import (
     feedbacks,
     invites,
     kanban,
+    reviews,
     tasks,
     users,
 )
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncGenerator[None]:
+    """Manage the Arbiter worker subprocess over the application lifetime."""
+    import sys
+
+    process: Popen | None = None
+    if settings.arbiter_worker_spawn:
+        process = Popen([sys.executable, "-m", "briefchain.arbiter"])
+    try:
+        yield
+    finally:
+        if process is not None:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except Exception:  # noqa: BLE001
+                process.kill()
 
 
 def create_app() -> FastAPI:
@@ -31,6 +56,7 @@ def create_app() -> FastAPI:
         title="BriefChain API",
         description="API for BriefChain user authentication and profile management.",
         version="0.1.0",
+        lifespan=_lifespan,
     )
 
     app.add_exception_handler(APIError, api_error_handler)
@@ -42,6 +68,7 @@ def create_app() -> FastAPI:
     app.include_router(users.router, prefix="/api/v1")
     app.include_router(briefs.router, prefix="/api/v1")
     app.include_router(brief_versions.router, prefix="/api/v1")
+    app.include_router(reviews.router, prefix="/api/v1")
     app.include_router(brief_transfers.router, prefix="/api/v1")
     app.include_router(feedbacks.brief_router, prefix="/api/v1")
     app.include_router(feedbacks.feedback_router, prefix="/api/v1")
